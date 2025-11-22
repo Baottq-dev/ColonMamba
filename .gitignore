@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Model files và datasets (thường rất lớn)
+*.pth
+*.pkl
+*.pkl.json
+*.log.json
+pretrained/
+Polyp datasets/
+TrainDataset/
+TestDataset/
+snapshots/
+
+# Cache và temporary files
+.cache/
+.pytest_cache/
+.mypy_cache/
+*.cache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Work directories
+work_dirs/
+mmseg/.mim/
+mmseg_new/
+mmseg_old/
+ColonFormer/

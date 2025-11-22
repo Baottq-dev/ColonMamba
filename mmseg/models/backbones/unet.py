@@ -1,13 +1,14 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+import warnings
+
 import torch.nn as nn
 import torch.utils.checkpoint as cp
-from mmcv.cnn import (UPSAMPLE_LAYERS, ConvModule, build_activation_layer,
-                      build_norm_layer, constant_init, kaiming_init)
-from mmcv.runner import load_checkpoint
-from mmcv.utils.parrots_wrapper import _BatchNorm
+from mmcv.cnn import ConvModule, build_activation_layer, build_norm_layer
+from mmengine.model import BaseModule
+from mmengine.utils.dl_utils.parrots_wrapper import _BatchNorm
 
-from mmseg.utils import get_root_logger
-from ..builder import BACKBONES
-from ..utils import UpConvBlock
+from mmseg.registry import MODELS
+from ..utils import UpConvBlock, Upsample
 
 
 class BasicConvBlock(nn.Module):
@@ -35,7 +36,7 @@ class BasicConvBlock(nn.Module):
             Default: dict(type='BN').
         act_cfg (dict | None): Config dict for activation layer in ConvModule.
             Default: dict(type='ReLU').
-        dcn (bool): Use deformable convoluton in convolutional layer or not.
+        dcn (bool): Use deformable convolution in convolutional layer or not.
             Default: None.
         plugins (dict): plugins for convolutional layers. Default: None.
     """
@@ -52,7 +53,7 @@ class BasicConvBlock(nn.Module):
                  act_cfg=dict(type='ReLU'),
                  dcn=None,
                  plugins=None):
-        super(BasicConvBlock, self).__init__()
+        super().__init__()
         assert dcn is None, 'Not implemented yet.'
         assert plugins is None, 'Not implemented yet.'
 
@@ -83,7 +84,7 @@ class BasicConvBlock(nn.Module):
         return out
 
 
-@UPSAMPLE_LAYERS.register_module()
+@MODELS.register_module()
 class DeconvModule(nn.Module):
     """Deconvolution upsample module in decoder for UNet (2X upsample).
 
@@ -111,7 +112,7 @@ class DeconvModule(nn.Module):
                  *,
                  kernel_size=4,
                  scale_factor=2):
-        super(DeconvModule, self).__init__()
+        super().__init__()
 
         assert (kernel_size - scale_factor >= 0) and\
                (kernel_size - scale_factor) % 2 == 0,\
@@ -144,7 +145,7 @@ class DeconvModule(nn.Module):
         return out
 
 
-@UPSAMPLE_LAYERS.register_module()
+@MODELS.register_module()
 class InterpConv(nn.Module):
     """Interpolation upsample module in decoder for UNet.
 
@@ -171,7 +172,7 @@ class InterpConv(nn.Module):
         kernel_size (int): Kernel size of the convolutional layer. Default: 1.
         stride (int): Stride of the convolutional layer. Default: 1.
         padding (int): Padding of the convolutional layer. Default: 1.
-        upsampe_cfg (dict): Interpolation config of the upsample layer.
+        upsample_cfg (dict): Interpolation config of the upsample layer.
             Default: dict(
                 scale_factor=2, mode='bilinear', align_corners=False).
     """
@@ -188,9 +189,9 @@ class InterpConv(nn.Module):
                  kernel_size=1,
                  stride=1,
                  padding=0,
-                 upsampe_cfg=dict(
+                 upsample_cfg=dict(
                      scale_factor=2, mode='bilinear', align_corners=False)):
-        super(InterpConv, self).__init__()
+        super().__init__()
 
         self.with_cp = with_cp
         conv = ConvModule(
@@ -202,7 +203,7 @@ class InterpConv(nn.Module):
             conv_cfg=conv_cfg,
             norm_cfg=norm_cfg,
             act_cfg=act_cfg)
-        upsample = nn.Upsample(**upsampe_cfg)
+        upsample = Upsample(**upsample_cfg)
         if conv_first:
             self.interp_upsample = nn.Sequential(conv, upsample)
         else:
@@ -218,11 +219,12 @@ class InterpConv(nn.Module):
         return out
 
 
-@BACKBONES.register_module()
-class UNet(nn.Module):
+@MODELS.register_module()
+class UNet(BaseModule):
     """UNet backbone.
-    U-Net: Convolutional Networks for Biomedical Image Segmentation.
-    https://arxiv.org/pdf/1505.04597.pdf
+
+    This backbone is the implementation of `U-Net: Convolutional Networks
+    for Biomedical Image Segmentation <https://arxiv.org/abs/1505.04597>`_.
 
     Args:
         in_channels (int): Number of input image channels. Default" 3.
@@ -232,17 +234,17 @@ class UNet(nn.Module):
         strides (Sequence[int 1 | 2]): Strides of each stage in encoder.
             len(strides) is equal to num_stages. Normally the stride of the
             first stage in encoder is 1. If strides[i]=2, it uses stride
-            convolution to downsample in the correspondance encoder stage.
+            convolution to downsample in the correspondence encoder stage.
             Default: (1, 1, 1, 1, 1).
         enc_num_convs (Sequence[int]): Number of convolutional layers in the
-            convolution block of the correspondance encoder stage.
+            convolution block of the correspondence encoder stage.
             Default: (2, 2, 2, 2, 2).
         dec_num_convs (Sequence[int]): Number of convolutional layers in the
-            convolution block of the correspondance decoder stage.
+            convolution block of the correspondence decoder stage.
             Default: (2, 2, 2, 2).
         downsamples (Sequence[int]): Whether use MaxPool to downsample the
             feature map after the first stage of encoder
-            (stages: [1, num_stages)). If the correspondance encoder stage use
+            (stages: [1, num_stages)). If the correspondence encoder stage use
             stride convolution (strides[i]=2), it will never use MaxPool to
             downsample, even downsamples[i-1]=True.
             Default: (True, True, True, True).
@@ -263,15 +265,17 @@ class UNet(nn.Module):
         norm_eval (bool): Whether to set norm layers to eval mode, namely,
             freeze running stats (mean and var). Note: Effect on Batch Norm
             and its variants only. Default: False.
-        dcn (bool): Use deformable convoluton in convolutional layer or not.
+        dcn (bool): Use deformable convolution in convolutional layer or not.
             Default: None.
         plugins (dict): plugins for convolutional layers. Default: None.
+        pretrained (str, optional): model pretrained path. Default: None
+        init_cfg (dict or list[dict], optional): Initialization config dict.
+            Default: None
 
     Notice:
-        The input image size should be devisible by the whole downsample rate
+        The input image size should be divisible by the whole downsample rate
         of the encoder. More detail of the whole downsample rate can be found
-        in UNet._check_input_devisible.
-
+        in UNet._check_input_divisible.
     """
 
     def __init__(self,
@@ -291,8 +295,30 @@ class UNet(nn.Module):
                  upsample_cfg=dict(type='InterpConv'),
                  norm_eval=False,
                  dcn=None,
-                 plugins=None):
-        super(UNet, self).__init__()
+                 plugins=None,
+                 pretrained=None,
+                 init_cfg=None):
+        super().__init__(init_cfg)
+
+        self.pretrained = pretrained
+        assert not (init_cfg and pretrained), \
+            'init_cfg and pretrained cannot be setting at the same time'
+        if isinstance(pretrained, str):
+            warnings.warn('DeprecationWarning: pretrained is a deprecated, '
+                          'please use "init_cfg" instead')
+            self.init_cfg = dict(type='Pretrained', checkpoint=pretrained)
+        elif pretrained is None:
+            if init_cfg is None:
+                self.init_cfg = [
+                    dict(type='Kaiming', layer='Conv2d'),
+                    dict(
+                        type='Constant',
+                        val=1,
+                        layer=['_BatchNorm', 'GroupNorm'])
+                ]
+        else:
+            raise TypeError('pretrained must be a str or None')
+
         assert dcn is None, 'Not implemented yet.'
         assert plugins is None, 'Not implemented yet.'
         assert len(strides) == num_stages, \
@@ -329,6 +355,7 @@ class UNet(nn.Module):
         self.strides = strides
         self.downsamples = downsamples
         self.norm_eval = norm_eval
+        self.base_channels = base_channels
 
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
@@ -369,11 +396,11 @@ class UNet(nn.Module):
                     act_cfg=act_cfg,
                     dcn=None,
                     plugins=None))
-            self.encoder.append((nn.Sequential(*enc_conv_block)))
+            self.encoder.append(nn.Sequential(*enc_conv_block))
             in_channels = base_channels * 2**i
 
     def forward(self, x):
-        self._check_input_devisible(x)
+        self._check_input_divisible(x)
         enc_outs = []
         for enc in self.encoder:
             x = enc(x)
@@ -388,14 +415,14 @@ class UNet(nn.Module):
     def train(self, mode=True):
         """Convert the model into training mode while keep normalization layer
         freezed."""
-        super(UNet, self).train(mode)
+        super().train(mode)
         if mode and self.norm_eval:
             for m in self.modules():
                 # trick: eval have effect on BatchNorm only
                 if isinstance(m, _BatchNorm):
                     m.eval()
 
-    def _check_input_devisible(self, x):
+    def _check_input_divisible(self, x):
         h, w = x.shape[-2:]
         whole_downsample_rate = 1
         for i in range(1, self.num_stages):
@@ -403,26 +430,7 @@ class UNet(nn.Module):
                 whole_downsample_rate *= 2
         assert (h % whole_downsample_rate == 0) \
             and (w % whole_downsample_rate == 0),\
-            f'The input image size {(h, w)} should be devisible by the whole '\
+            f'The input image size {(h, w)} should be divisible by the whole '\
             f'downsample rate {whole_downsample_rate}, when num_stages is '\
             f'{self.num_stages}, strides is {self.strides}, and downsamples '\
             f'is {self.downsamples}.'
-
-    def init_weights(self, pretrained=None):
-        """Initialize the weights in backbone.
-
-        Args:
-            pretrained (str, optional): Path to pre-trained weights.
-                Defaults to None.
-        """
-        if isinstance(pretrained, str):
-            logger = get_root_logger()
-            load_checkpoint(self, pretrained, strict=False, logger=logger)
-        elif pretrained is None:
-            for m in self.modules():
-                if isinstance(m, nn.Conv2d):
-                    kaiming_init(m)
-                elif isinstance(m, (_BatchNorm, nn.GroupNorm)):
-                    constant_init(m, 1)
-        else:
-            raise TypeError('pretrained must be a str or None')

@@ -1,8 +1,9 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import math
 
 from mmcv.cnn import build_conv_layer, build_norm_layer
 
-from ..builder import BACKBONES
+from mmseg.registry import MODELS
 from ..utils import ResLayer
 from .resnet import Bottleneck as _Bottleneck
 from .resnet import ResNet
@@ -22,7 +23,7 @@ class Bottleneck(_Bottleneck):
                  base_width=4,
                  base_channels=64,
                  **kwargs):
-        super(Bottleneck, self).__init__(inplanes, planes, **kwargs)
+        super().__init__(inplanes, planes, **kwargs)
 
         if groups == 1:
             width = self.planes
@@ -83,9 +84,13 @@ class Bottleneck(_Bottleneck):
         self.add_module(self.norm3_name, norm3)
 
 
-@BACKBONES.register_module()
+@MODELS.register_module()
 class ResNeXt(ResNet):
     """ResNeXt backbone.
+
+    This backbone is the implementation of `Aggregated
+    Residual Transformations for Deep Neural
+    Networks <https://arxiv.org/abs/1611.05431>`_.
 
     Args:
         depth (int): Depth of resnet, from {18, 34, 50, 101, 152}.
@@ -134,7 +139,7 @@ class ResNeXt(ResNet):
     def __init__(self, groups=1, base_width=4, **kwargs):
         self.groups = groups
         self.base_width = base_width
-        super(ResNeXt, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def make_res_layer(self, **kwargs):
         """Pack all blocks in a stage into a ``ResLayer``"""

@@ -1,14 +1,15 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
 from mmcv.cnn import ConvModule
 
-from mmseg.ops import resize
-from ..builder import HEADS
+from mmseg.registry import MODELS
+from ..utils import resize
 from .decode_head import BaseDecodeHead
 from .psp_head import PPM
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class UPerHead(BaseDecodeHead):
     """Unified Perceptual Parsing for Scene Understanding.
 
@@ -21,8 +22,7 @@ class UPerHead(BaseDecodeHead):
     """
 
     def __init__(self, pool_scales=(1, 2, 3, 6), **kwargs):
-        super(UPerHead, self).__init__(
-            input_transform='multiple_select', **kwargs)
+        super().__init__(input_transform='multiple_select', **kwargs)
         # PSP Module
         self.psp_modules = PPM(
             pool_scales,
@@ -83,10 +83,19 @@ class UPerHead(BaseDecodeHead):
 
         return output
 
-    def forward(self, inputs):
-        """Forward function."""
+    def _forward_feature(self, inputs):
+        """Forward function for feature maps before classifying each pixel with
+        ``self.cls_seg`` fc.
 
+        Args:
+            inputs (list[Tensor]): List of multi-level img features.
+
+        Returns:
+            feats (Tensor): A tensor of shape (batch_size, self.channels,
+                H, W) which is feature map for last layer of decoder head.
+        """
         inputs = self._transform_inputs(inputs)
+
         # build laterals
         laterals = [
             lateral_conv(inputs[i])
@@ -99,7 +108,7 @@ class UPerHead(BaseDecodeHead):
         used_backbone_levels = len(laterals)
         for i in range(used_backbone_levels - 1, 0, -1):
             prev_shape = laterals[i - 1].shape[2:]
-            laterals[i - 1] += resize(
+            laterals[i - 1] = laterals[i - 1] + resize(
                 laterals[i],
                 size=prev_shape,
                 mode='bilinear',
@@ -120,7 +129,11 @@ class UPerHead(BaseDecodeHead):
                 mode='bilinear',
                 align_corners=self.align_corners)
         fpn_outs = torch.cat(fpn_outs, dim=1)
-        output = self.fpn_bottleneck(fpn_outs)
+        feats = self.fpn_bottleneck(fpn_outs)
+        return feats
+
+    def forward(self, inputs):
+        """Forward function."""
+        output = self._forward_feature(inputs)
         output = self.cls_seg(output)
-        # output = self.cls_seg(fpn_outs[-1])
         return output

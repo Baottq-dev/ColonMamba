@@ -1,6 +1,7 @@
-import mmcv
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch.nn as nn
 from mmcv.cnn import ConvModule
+from mmengine.utils import is_tuple_of
 
 from .make_divisible import make_divisible
 
@@ -15,10 +16,10 @@ class SELayer(nn.Module):
         conv_cfg (None or dict): Config dict for convolution layer.
             Default: None, which means using conv2d.
         act_cfg (dict or Sequence[dict]): Config dict for activation layer.
-            If act_cfg is a dict, two activation layers will be configurated
+            If act_cfg is a dict, two activation layers will be configured
             by this dict. If act_cfg is a sequence of dicts, the first
-            activation layer will be configurated by the first dict and the
-            second activation layer will be configurated by the second dict.
+            activation layer will be configured by the first dict and the
+            second activation layer will be configured by the second dict.
             Default: (dict(type='ReLU'), dict(type='HSigmoid', bias=3.0,
             divisor=6.0)).
     """
@@ -29,11 +30,11 @@ class SELayer(nn.Module):
                  conv_cfg=None,
                  act_cfg=(dict(type='ReLU'),
                           dict(type='HSigmoid', bias=3.0, divisor=6.0))):
-        super(SELayer, self).__init__()
+        super().__init__()
         if isinstance(act_cfg, dict):
             act_cfg = (act_cfg, act_cfg)
         assert len(act_cfg) == 2
-        assert mmcv.is_tuple_of(act_cfg, dict)
+        assert is_tuple_of(act_cfg, dict)
         self.global_avgpool = nn.AdaptiveAvgPool2d(1)
         self.conv1 = ConvModule(
             in_channels=channels,

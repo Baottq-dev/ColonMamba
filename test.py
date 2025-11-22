@@ -9,6 +9,7 @@ import cv2
 from tqdm import tqdm
 from glob import glob
 import torch
+import torch.nn.functional as F
 
 from mmseg import __version__
 from mmseg.models.segmentors import ColonFormer as UNet
@@ -100,7 +101,7 @@ def inference(model, args):
     
     X_test = glob('{}/images/*'.format(args.test_path))
     X_test.sort()
-    y_test = glob('{}/masks/*'.format(args.test_path)
+    y_test = glob('{}/masks/*'.format(args.test_path))
     y_test.sort()
 
     test_dataset = Dataset(X_test, y_test)
@@ -160,7 +161,7 @@ if __name__ == '__main__':
                 pretrained='pretrained/mit_{}.pth'.format(args.backbone)).cuda()
 
     if args.weight != '':
-        checkpoint = torch.load(ckpt_path)
+        checkpoint = torch.load(args.weight, map_location='cuda' if torch.cuda.is_available() else 'cpu')
         model.load_state_dict(checkpoint['state_dict'])
 
     inference(model, args)

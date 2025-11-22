@@ -1,5 +1,8 @@
+import os
+os.environ['MMENGINE_LOG_LEVEL'] = 'ERROR'
+os.environ['MMCV_LOG_LEVEL'] = 'ERROR'
+
 import argparse
-import logging
 import os
 import random
 import sys
@@ -19,12 +22,91 @@ from torch.autograd import Variable
 from datetime import datetime
 import torch.nn.functional as F
 
-from albumentations.augmentations import transforms
-from albumentations.core.composition import Compose, OneOf
+# from albumentations.augmentations import transforms
+# from albumentations.core.composition import Compose, OneOf
 
 from mmseg import __version__
 from mmseg.models.segmentors import ColonFormer as UNet
 
+import logging
+
+# Cấu hình backbone kiểu cũ nhưng theo API mới
+BACKBONE_CONFIGS = {
+    'b0': dict(
+        type='MixVisionTransformer',
+        embed_dims=32,
+        num_layers=[2, 2, 2, 2],
+        num_heads=[1, 2, 5, 8],
+        patch_sizes=[7, 3, 3, 3],
+        strides=[4, 2, 2, 2],
+        sr_ratios=[8, 4, 2, 1],
+        out_indices=(0, 1, 2, 3),
+        init_cfg=dict(type='Pretrained', checkpoint='pretrained/mit_b0.pth')),
+    'b1': dict(
+        type='MixVisionTransformer',
+        embed_dims=64,
+        num_layers=[2, 2, 2, 2],
+        num_heads=[1, 2, 5, 8],
+        patch_sizes=[7, 3, 3, 3],
+        strides=[4, 2, 2, 2],
+        sr_ratios=[8, 4, 2, 1],
+        out_indices=(0, 1, 2, 3),
+        init_cfg=dict(type='Pretrained', checkpoint='pretrained/mit_b1.pth')),
+    'b2': dict(
+        type='MixVisionTransformer',
+        embed_dims=64,
+        num_layers=[3, 4, 6, 3],
+        num_heads=[1, 2, 5, 8],
+        patch_sizes=[7, 3, 3, 3],
+        strides=[4, 2, 2, 2],
+        sr_ratios=[8, 4, 2, 1],
+        out_indices=(0, 1, 2, 3),
+        init_cfg=dict(type='Pretrained', checkpoint='pretrained/mit_b2.pth')),
+    'b3': dict(
+        type='MixVisionTransformer',
+        embed_dims=64,
+        num_layers=[3, 4, 18, 3],
+        num_heads=[1, 2, 5, 8],
+        patch_sizes=[7, 3, 3, 3],
+        strides=[4, 2, 2, 2],
+        sr_ratios=[8, 4, 2, 1],
+        out_indices=(0, 1, 2, 3),
+        init_cfg=dict(type='Pretrained', checkpoint='pretrained/mit_b3.pth')),
+    'b4': dict(
+        type='MixVisionTransformer',
+        embed_dims=64,
+        num_layers=[3, 8, 27, 3],
+        num_heads=[1, 2, 8, 16],
+        patch_sizes=[7, 3, 3, 3],
+        strides=[4, 2, 2, 2],
+        sr_ratios=[8, 4, 2, 1],
+        out_indices=(0, 1, 2, 3),
+        init_cfg=dict(type='Pretrained', checkpoint='pretrained/mit_b4.pth')),
+    'b5': dict(
+        type='MixVisionTransformer',
+        embed_dims=64,
+        num_layers=[3, 6, 40, 3],
+        num_heads=[1, 2, 10, 20],
+        patch_sizes=[7, 3, 3, 3],
+        strides=[4, 2, 2, 2],
+        sr_ratios=[8, 4, 2, 1],
+        out_indices=(0, 1, 2, 3),
+        init_cfg=dict(type='Pretrained', checkpoint='pretrained/mit_b5.pth')),
+}
+
+BACKBONE_CHANNELS = {
+    'b0': [32, 64, 160, 256],
+    'b1': [64, 128, 320, 512],
+    'b2': [64, 128, 320, 512],
+    'b3': [64, 128, 320, 512],
+    'b4': [64, 128, 320, 512],
+    'b5': [64, 128, 320, 512],
+}
+
+def get_backbone_cfg(name):
+    if name not in BACKBONE_CONFIGS:
+        raise ValueError(f'Unsupported backbone: {name}')
+    return BACKBONE_CONFIGS[name], BACKBONE_CHANNELS[name]
 
 class Dataset(torch.utils.data.Dataset):
     
@@ -134,7 +216,13 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
     loss_record = AvgMeter()
     dice, iou = AvgMeter(), AvgMeter()
     with torch.autograd.set_detect_anomaly(True):
-        for i, pack in enumerate(train_loader, start=1):
+        progress_bar = tqdm(
+            train_loader,
+            total=total_step,
+            desc=f"Epoch {epoch}/{args.num_epochs}",
+            leave=False
+        )
+        for i, pack in enumerate(progress_bar, start=1):
             if epoch <= 1:
                     optimizer.param_groups[0]["lr"] = (epoch * i) / (1.0 * total_step) * args.init_lr
             else:
@@ -148,14 +236,14 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
                 gts = Variable(gts).cuda()
                 # ---- rescale ----
                 trainsize = int(round(args.init_trainsize*rate/32)*32)
-                images = F.upsample(images, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-                gts = F.upsample(gts, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+                images = F.interpolate (images, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+                gts = F.interpolate (gts, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
                 # ---- forward ----
                 map4, map3, map2, map1 = model(images)
-                map1 = F.upsample(map1, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-                map2 = F.upsample(map2, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-                map3 = F.upsample(map3, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-                map4 = F.upsample(map4, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+                map1 = F.interpolate (map1, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+                map2 = F.interpolate (map2, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+                map3 = F.interpolate (map3, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+                map4 = F.interpolate (map4, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
                 loss = structure_loss(map1, gts) + structure_loss(map2, gts) + structure_loss(map3, gts) + structure_loss(map4, gts)
                 # with torch.autograd.set_detect_anomaly(True):
                 #loss = nn.functional.binary_cross_entropy(map1, gts)
@@ -171,6 +259,11 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
                     loss_record.update(loss.data, args.batchsize)
                     dice.update(dice_score.data, args.batchsize)
                     iou.update(iou_score.data, args.batchsize)
+                    progress_bar.set_postfix({
+                        "loss": float(loss_record.val),
+                        "dice": float(dice.val),
+                        "iou": float(iou.val)
+                    })
 
             # ---- train visualization ----
             if i == total_step:
@@ -207,9 +300,11 @@ if __name__ == '__main__':
                         default='./data/TrainDataset', help='path to train dataset')
     parser.add_argument('--train_save', type=str,
                         default='ConlonFormerB3')
-    parser.add_argument('--resume_path', type=str, help='path to checkpoint for resume training'
+    parser.add_argument('--resume_path', type=str, help='path to checkpoint for resume training',
                         default='')
     args = parser.parse_args()
+
+    logging.getLogger('mmengine').setLevel(logging.WARNING)
 
     save_path = 'snapshots/{}/'.format(args.train_save)
     if not os.path.exists(save_path):
@@ -219,8 +314,8 @@ if __name__ == '__main__':
 
     train_img_paths = []
     train_mask_paths = []
-    train_img_paths = glob('{}/images/*'.format(args.train_path))
-    train_mask_paths = glob('{}/masks/*'.format(args.train_path))
+    train_img_paths = glob('{}/image/*'.format(args.train_path))
+    train_mask_paths = glob('{}/mask/*'.format(args.train_path))
     train_img_paths.sort()
     train_mask_paths.sort()
 
@@ -235,19 +330,19 @@ if __name__ == '__main__':
 
     total_step = len(train_loader)
 
-    model = UNet(backbone=dict(
-                    type='mit_{}'.format(args.backbone),
-                    style='pytorch'), 
+    backbone_cfg, in_channels = get_backbone_cfg(args.backbone)
+    
+    model = UNet(
+                backbone=backbone_cfg, 
                 decode_head=dict(
                     type='UPerHead',
-                    in_channels=[64, 128, 320, 512],
+                    in_channels=in_channels,
                     in_index=[0, 1, 2, 3],
                     channels=128,
                     dropout_ratio=0.1,
                     num_classes=1,
                     norm_cfg=dict(type='BN', requires_grad=True),
                     align_corners=False,
-                    decoder_params=dict(embed_dim=768),
                     loss_decode=dict(type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)),
                 neck=None,
                 auxiliary_head=None,
@@ -255,6 +350,21 @@ if __name__ == '__main__':
                 test_cfg=dict(mode='whole'),
                 pretrained='pretrained/mit_{}.pth'.format(args.backbone)).cuda()
 
+
+
+    # sau khi model khởi tạo
+    mmengine_logger = logging.getLogger('mmengine')
+    for handler in list(mmengine_logger.handlers):
+        mmengine_logger.removeHandler(handler)
+    mmengine_logger.setLevel(logging.CRITICAL)
+    mmengine_logger.propagate = False
+
+    mmseg_logger = logging.getLogger('mmseg')
+    for handler in list(mmseg_logger.handlers):
+        mmseg_logger.removeHandler(handler)
+    mmseg_logger.setLevel(logging.CRITICAL)
+    mmseg_logger.propagate = False
+    
     # ---- flops and params ----
     params = model.parameters()
     optimizer = torch.optim.Adam(params, args.init_lr)

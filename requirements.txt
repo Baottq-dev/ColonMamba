@@ -1,3 +1,34 @@
-mmcv-full==1.2.7
-torchvision==0.8.2
-timm
+# Python 3.10
+
+# URL for PyTorch cu118 builds (must be placed at the top)
+--extra-index-url https://download.pytorch.org/whl/cu118
+
+# URL for MMCV cu118 + torch 2.2
+-f https://download.openmmlab.com/mmcv/dist/cu118/torch2.2/index.html
+
+# Core deep learning frameworks
+torch==2.2.1+cu118
+torchvision==0.17.1+cu118
+
+timm==0.9.12
+
+# Computer vision and image processing
+opencv-python==4.11.0.86
+albumentations==2.0.8
+matplotlib==3.10.7
+Pillow==12.0.0
+
+# Utilities
+numpy==1.26.4 
+tqdm==4.67.1
+scipy==1.15.3
+
+# MMCV and MMEngine
+mmcv==2.2.0
+mmengine==0.10.7
+
+ftfy==6.3.1
+regex==2025.11.3
+
+
+

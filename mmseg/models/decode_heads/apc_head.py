@@ -1,10 +1,11 @@
+# Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from mmcv.cnn import ConvModule
 
-from mmseg.ops import resize
-from ..builder import HEADS
+from mmseg.registry import MODELS
+from ..utils import resize
 from .decode_head import BaseDecodeHead
 
 
@@ -13,7 +14,7 @@ class ACM(nn.Module):
 
     Args:
         pool_scale (int): Pooling scale used in Adaptive Context
-            Module to extract region fetures.
+            Module to extract region features.
         fusion (bool): Add one conv to fuse residual feature.
         in_channels (int): Input channels.
         channels (int): Channels after modules, before conv_seg.
@@ -24,7 +25,7 @@ class ACM(nn.Module):
 
     def __init__(self, pool_scale, fusion, in_channels, channels, conv_cfg,
                  norm_cfg, act_cfg):
-        super(ACM, self).__init__()
+        super().__init__()
         self.pool_scale = pool_scale
         self.fusion = fusion
         self.in_channels = in_channels
@@ -106,7 +107,7 @@ class ACM(nn.Module):
         return z_out
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class APCHead(BaseDecodeHead):
     """Adaptive Pyramid Context Network for Semantic Segmentation.
 
@@ -122,7 +123,7 @@ class APCHead(BaseDecodeHead):
     """
 
     def __init__(self, pool_scales=(1, 2, 3, 6), fusion=True, **kwargs):
-        super(APCHead, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         assert isinstance(pool_scales, (list, tuple))
         self.pool_scales = pool_scales
         self.fusion = fusion

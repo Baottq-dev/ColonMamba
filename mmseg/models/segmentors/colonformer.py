@@ -2,11 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mmseg.core import add_prefix
-from mmseg.ops import resize
+# from mmseg.core import add_prefix
+# from mmseg.ops import resize
+# from .. import builder
+# from ..builder import SEGMENTORS
+# from .base import BaseSegmentor
+
+from mmseg.registry import MODELS
 from .. import builder
-from ..builder import SEGMENTORS
-from .base import BaseSegmentor
 
 import numpy as np
 import cv2
@@ -15,7 +18,8 @@ from .lib.conv_layer import Conv, BNPReLU
 from .lib.axial_atten import AA_kernel
 from .lib.context_module import CFPModule
 
-@SEGMENTORS.register_module()
+
+@MODELS.register_module()
 class ColonFormer(nn.Module):
     """Encoder Decoder segmentors.
 
@@ -44,7 +48,7 @@ class ColonFormer(nn.Module):
         self.align_corners = self.decode_head.align_corners
         self.num_classes = self.decode_head.num_classes
 
-        self.backbone.init_weights(pretrained=pretrained)
+        self.backbone.init_weights()
         self.decode_head.init_weights()
         
         self.CFP_1 = CFPModule(128, d = 8)
