@@ -2,12 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# from mmseg.core import add_prefix
-# from mmseg.ops import resize
-# from .. import builder
-# from ..builder import SEGMENTORS
-# from .base import BaseSegmentor
-
 from mmseg.registry import MODELS
 from .. import builder
 
@@ -48,13 +42,11 @@ class ColonFormer(nn.Module):
         self.align_corners = self.decode_head.align_corners
         self.num_classes = self.decode_head.num_classes
 
-        self.backbone.init_weights()
-        self.decode_head.init_weights()
+        self.init_weights(pretrained=pretrained)
         
         self.CFP_1 = CFPModule(128, d = 8)
         self.CFP_2 = CFPModule(320, d = 8)
         self.CFP_3 = CFPModule(512, d = 8)
-        ###### dilation rate 4, 62.8
 
         self.ra1_conv1 = Conv(128,32,3,1,padding=1,bn_acti=True)
         self.ra1_conv2 = Conv(32,32,3,1,padding=1,bn_acti=True)
@@ -71,6 +63,15 @@ class ColonFormer(nn.Module):
         self.aa_kernel_1 = AA_kernel(128,128)
         self.aa_kernel_2 = AA_kernel(320,320)
         self.aa_kernel_3 = AA_kernel(512,512)
+
+    def init_weights(self, pretrained=None):
+        """Initialize the weights in backbone and heads."""
+        if pretrained is not None:
+            from mmengine.runner import load_checkpoint
+            load_checkpoint(self.backbone, pretrained, map_location='cpu', strict=False, logger='current')
+        else:
+            self.backbone.init_weights()
+        self.decode_head.init_weights()
         
     def forward(self, x):
         segout = self.backbone(x)

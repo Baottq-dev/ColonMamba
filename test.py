@@ -14,6 +14,8 @@ import torch.nn.functional as F
 from mmseg import __version__
 from mmseg.models.segmentors import ColonFormer as UNet
 
+from train import get_backbone_cfg  
+
 class Dataset(torch.utils.data.Dataset):
     
     def __init__(self, img_paths, mask_paths, aug=True, transform=None):
@@ -121,7 +123,7 @@ def inference(model, args):
         image = image.cuda()
 
         res, res2, res3, res4 = model(image)
-        res = F.upsample(res, size=gt.shape, mode='bilinear', align_corners=False)
+        res = F.interpolate(res, size=gt.shape, mode='bilinear', align_corners=False)
         res = res.sigmoid().data.cpu().numpy().squeeze()
         res = (res - res.min()) / (res.max() - res.min() + 1e-8)
         pr = res.round()
@@ -140,12 +142,13 @@ if __name__ == '__main__':
                         default='./data/TestDataset', help='path to dataset')
     args = parser.parse_args()
 
-    model = UNet(backbone=dict(
-                    type='mit_{}'.format(args.backbone),
-                    style='pytorch'), 
+    backbone_cfg, in_channels = get_backbone_cfg(args.backbone)
+    
+    model = UNet(
+                backbone=backbone_cfg, 
                 decode_head=dict(
                     type='UPerHead',
-                    in_channels=[64, 128, 320, 512],
+                    in_channels=in_channels,
                     in_index=[0, 1, 2, 3],
                     channels=128,
                     dropout_ratio=0.1,
