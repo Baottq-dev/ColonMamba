@@ -267,16 +267,9 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
                     '[loss: {:0.4f}, dice: {:0.4f}, iou: {:0.4f}]'.
                     format(datetime.now(), epoch, args.num_epochs,\
                             loss_record.show(), dice.show(), iou.show()))
-
-    ckpt_path = save_path + 'last.pth'
-    print('[Saving Checkpoint:]', ckpt_path)
-    checkpoint = {
-        'epoch': epoch + 1,
-        'state_dict': model.state_dict(),
-        'optimizer': optimizer.state_dict(),
-        'scheduler': lr_scheduler.state_dict()
-    }
-    torch.save(checkpoint, ckpt_path)
+    
+    # Return metrics for best model tracking
+    return loss_record.show(), dice.show(), iou.show()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -365,5 +358,35 @@ if __name__ == '__main__':
         optimizer.load_state_dict(checkpoint['optimizer'])
 
     print("#"*20, "Start Training", "#"*20)
+    
+    # Track best IoU for saving best model
+    best_iou = 0.0
+    
     for epoch in range(start_epoch, args.num_epochs+1):
-        train(train_loader, model, optimizer, epoch, lr_scheduler, args)
+        # Train and get metrics
+        loss, dice, iou = train(train_loader, model, optimizer, epoch, lr_scheduler, args)
+        
+        # Create checkpoint with metrics
+        checkpoint = {
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler': lr_scheduler.state_dict(),
+            'metrics': {
+                'loss': loss,
+                'dice': dice,
+                'iou': iou
+            }
+        }
+        
+        # Save last checkpoint
+        last_path = save_path + 'last.pth'
+        torch.save(checkpoint, last_path)
+        print(f'[Saved Last Checkpoint] {last_path}')
+        
+        # Save best checkpoint if IoU improved
+        if iou > best_iou:
+            best_iou = iou
+            best_path = save_path + 'best.pth'
+            torch.save(checkpoint, best_path)
+            print(f'✨ [Saved Best Model] IoU: {iou:.4f} -> {best_path}')
