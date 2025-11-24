@@ -29,6 +29,8 @@ from mmseg import __version__
 from mmseg.models.segmentors import ColonFormer as UNet
 
 import logging
+import warnings
+warnings.filterwarnings('ignore')
 
 # Cấu hình backbone kiểu cũ nhưng theo API mới
 BACKBONE_CONFIGS = {
@@ -153,6 +155,133 @@ def precision_m(y_true, y_pred):
 
 def dice_m(y_true, y_pred):
     precision = precision_m(y_true, y_pred)
+    recall = recall_m(y_true, y_pred)
+    return 2*((precision*recall)/(precision+recall+epsilon))
+
+def iou_m(y_true, y_pred):
+    precision = precision_m(y_true, y_pred)
+    recall = recall_m(y_true, y_pred)
+    return recall*precision/(recall+precision-recall*precision + epsilon)
+
+
+class FocalLossV1(nn.Module):
+    
+    def __init__(self,
+                alpha=0.25,
+                gamma=2,
+                reduction='mean',):
+        super(FocalLossV1, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+        self.crit = nn.BCEWithLogitsLoss(reduction='none')
+
+    def forward(self, logits, label):
+        # compute loss
+        logits = logits.float() # use fp32 if logits is fp16
+        with torch.no_grad():
+            alpha = torch.empty_like(logits).fill_(1 - self.alpha)
+            alpha[label == 1] = self.alpha
+
+        probs = torch.sigmoid(logits)
+        pt = torch.where(label == 1, probs, 1 - probs)
+        ce_loss = self.crit(logits, label.float())
+        loss = (alpha * torch.pow(1 - pt, self.gamma) * ce_loss)
+        if self.reduction == 'mean':
+            loss = loss.mean()
+        if self.reduction == 'sum':
+            loss = loss.sum()
+        return loss
+
+def structure_loss(pred, mask):
+    weit = 1 + 5*torch.abs(F.avg_pool2d(mask, kernel_size=31, stride=1, padding=15) - mask)
+    wfocal = FocalLossV1()(pred, mask)
+    wfocal = (wfocal*weit).sum(dim=(2,3)) / weit.sum(dim=(2, 3))
+
+    pred = torch.sigmoid(pred)
+    inter = ((pred * mask)*weit).sum(dim=(2, 3))
+    union = ((pred + mask)*weit).sum(dim=(2, 3))
+    wiou = 1 - (inter + 1)/(union - inter+1)
+    return (wfocal + wiou).mean()
+
+
+def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
+    model.train()
+    # ---- multi-scale training ----
+    size_rates = [0.75, 1, 1.25]
+    loss_record = AvgMeter()
+    dice, iou = AvgMeter(), AvgMeter()
+    # with torch.autograd.set_detect_anomaly(True):
+    progress_bar = tqdm(
+        train_loader,
+        total=total_step,
+        desc=f"Epoch {epoch}/{args.num_epochs}",
+        leave=False
+    )
+    for i, pack in enumerate(progress_bar, start=1):
+        if epoch <= 1:
+                optimizer.param_groups[0]["lr"] = (epoch * i) / (1.0 * total_step) * args.init_lr
+        else:
+            lr_scheduler.step()
+
+        for rate in size_rates: 
+            optimizer.zero_grad()
+            # ---- data prepare ----
+            images, gts = pack
+            images = Variable(images).cuda()
+            gts = Variable(gts).cuda()
+            # ---- rescale ----
+            trainsize = int(round(args.init_trainsize*rate/32)*32)
+            images = F.interpolate (images, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            gts = F.interpolate (gts, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            # ---- forward ----
+            map4, map3, map2, map1 = model(images)
+            map1 = F.interpolate (map1, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            map2 = F.interpolate (map2, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            map3 = F.interpolate (map3, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            map4 = F.interpolate (map4, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            loss = structure_loss(map1, gts) + structure_loss(map2, gts) + structure_loss(map3, gts) + structure_loss(map4, gts)
+            # with torch.autograd.set_detect_anomaly(True):
+            #loss = nn.functional.binary_cross_entropy(map1, gts)
+            # ---- metrics ----
+            dice_score = dice_m(map4, gts)
+            iou_score = iou_m(map4, gts)
+            # ---- backward ----
+            loss.backward()
+            clip_gradient(optimizer, args.clip)
+            optimizer.step()
+            # ---- recording loss ----
+            if rate == 1:
+                loss_record.update(loss.data, args.batchsize)
+                dice.update(dice_score.data, args.batchsize)
+                iou.update(iou_score.data, args.batchsize)
+                progress_bar.set_postfix({
+                    "loss": float(loss_record.val),
+                    "dice": float(dice.val),
+                    "iou": float(iou.val)
+                })
+
+        # ---- train visualization ----
+        if i == total_step:
+            print('{} Training Epoch [{:03d}/{:03d}], '
+                    '[loss: {:0.4f}, dice: {:0.4f}, iou: {:0.4f}]'.
+                    format(datetime.now(), epoch, args.num_epochs,\
+                            loss_record.show(), dice.show(), iou.show()))
+
+    ckpt_path = save_path + 'last.pth'
+    print('[Saving Checkpoint:]', ckpt_path)
+    checkpoint = {
+        'epoch': epoch + 1,
+        'state_dict': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scheduler': lr_scheduler.state_dict()
+    }
+    torch.save(checkpoint, ckpt_path)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--num_epochs', type=int,
+                        default=20, help='epoch number')
     parser.add_argument('--backbone', type=str,
                         default='b3', help='backbone version')
     parser.add_argument('--init_lr', type=float,
