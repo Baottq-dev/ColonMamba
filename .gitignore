@@ -28,6 +28,7 @@ ENV/
 *.pkl
 *.pkl.json
 *.log.json
+data.zip
 pretrained/
 Polyp datasets/
 TrainDataset/
@@ -49,4 +50,3 @@ work_dirs/
 mmseg/.mim/
 mmseg_new/
 mmseg_old/
-ColonFormer/
