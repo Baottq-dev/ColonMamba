@@ -288,9 +288,11 @@ if __name__ == '__main__':
     parser.add_argument('--train_path', type=str,
                         default='./data/TrainDataset', help='path to train dataset')
     parser.add_argument('--train_save', type=str,
-                        default='ConlonFormerB3')
+                        default='ColonFormerB3')
     parser.add_argument('--resume_path', type=str, help='path to checkpoint for resume training',
-                        default='')
+                        default='') 
+    parser.add_argument('--pretrained_path', type=str, help='path to pretrained backbone weights',
+                        default='')  
     args = parser.parse_args()
 
     logging.getLogger('mmengine').setLevel(logging.WARNING)
@@ -337,8 +339,7 @@ if __name__ == '__main__':
                 auxiliary_head=None,
                 train_cfg=dict(),
                 test_cfg=dict(mode='whole'),
-                pretrained='pretrained/mit_{}_mmseg.pth'.format(args.backbone)).cuda()
-
+                pretrained=args.pretrained_path if args.pretrained_path else 'pretrained/mit_{}_mmseg.pth'.format(args.backbone)).cuda()
 
 
     
