@@ -142,14 +142,22 @@ class Dataset(torch.utils.data.Dataset):
 epsilon = 1e-7
 
 def recall_m(y_true, y_pred):
-    true_positives = torch.sum(torch.round(torch.clip(y_true * y_pred, 0, 1)))
-    possible_positives = torch.sum(torch.round(torch.clip(y_true, 0, 1)))
+    # Binarize predictions và ground truth với threshold 0.5
+    y_pred_binary = (y_pred > 0.5).float()
+    y_true_binary = (y_true > 0.5).float()
+    
+    true_positives = torch.sum(y_pred_binary * y_true_binary)
+    possible_positives = torch.sum(y_true_binary)
     recall = true_positives / (possible_positives + epsilon)
     return recall
 
 def precision_m(y_true, y_pred):
-    true_positives = torch.sum(torch.round(torch.clip(y_true * y_pred, 0, 1)))
-    predicted_positives = torch.sum(torch.round(torch.clip(y_pred, 0, 1)))
+    # Binarize predictions và ground truth với threshold 0.5
+    y_pred_binary = (y_pred > 0.5).float()
+    y_true_binary = (y_true > 0.5).float()
+    
+    true_positives = torch.sum(y_pred_binary * y_true_binary)
+    predicted_positives = torch.sum(y_pred_binary)
     precision = true_positives / (predicted_positives + epsilon)
     return precision
 
