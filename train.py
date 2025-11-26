@@ -244,8 +244,9 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
             # with torch.autograd.set_detect_anomaly(True):
             #loss = nn.functional.binary_cross_entropy(map1, gts)
             # ---- metrics ----
-            dice_score = dice_m(map4, gts)
-            iou_score = iou_m(map4, gts)
+            map4_sigmoid = torch.sigmoid(map4)  # Convert logits → probabilities [0, 1]
+            dice_score = dice_m(map4_sigmoid, gts)
+            iou_score = iou_m(map4_sigmoid, gts)
             # ---- backward ----
             loss.backward()
             clip_gradient(optimizer, args.clip)
