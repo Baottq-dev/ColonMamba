@@ -1,0 +1,78 @@
+# Python
+*.py[cod]
+*$py.class
+*.so
+__pycache__/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environments
+venv/
+env/
+ENV/
+colonmamba/
+.conda/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# PyCharm
+.idea/
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Model checkpoints and weights
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pkl
+*.pickle
+*.html
+*.txt
+checkpoints/
+models/
+weights/
+pretrained/
+
+# Dataset
+data/
+dataset/
+datasets/
+docs/
+*.zip
+*.tar
+*.tar.gz
+
+# Logs and outputs
+logs/
+*.log
+runs/
+wandb/
+tensorboard/
+lightning_logs/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Training artifacts
+outputs/
+results/
+experiments/
+
+# Cache
+.cache/
+*.cache
+
+# Environment variables
+.env
+.env.local
