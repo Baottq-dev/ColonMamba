@@ -1,6 +1,6 @@
 # ColonMamba - Hybrid ResNet-VMamba for Polyp Segmentation
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 1.10+](https://img.shields.io/badge/pytorch-1.10+-orange.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -27,8 +27,8 @@ Input → ResNet-34 (Stages 1-2) → FTM Bridge → VMamba-Tiny (Stages 3-4) →
 
 ### Requirements
 ```bash
-python >= 3.8
-torch >= 1.10
+python >= 3.10
+torch 
 torchvision
 opencv-python
 albumentations
@@ -42,7 +42,7 @@ Pillow
 ### Setup
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/ColonMamba.git
+git clone https://github.com/Baottq-dev/ColonMamba.git
 cd ColonMamba
 
 # Install dependencies
@@ -267,8 +267,8 @@ This project is licensed under the MIT License - see LICENSE file for details.
 ## Contact
 
 For questions or collaboration:
-- Email: your.email@example.com
-- GitHub Issues: [Submit an issue](https://github.com/yourusername/ColonMamba/issues)
+- Email: baottqdeveloper@gmail.com
+- GitHub Issues: [Submit an issue](https://github.com/Baottq-dev/ColonMamba/issues)
 
 ---
 
