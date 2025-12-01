@@ -1,4 +1,6 @@
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'  
+
 import argparse
 import torch
 import torch.nn as nn
@@ -235,8 +237,22 @@ def validate(model, val_loader, criterion, device, epoch, writer):
             images = batch['image'].to(device)
             masks = batch['mask'].to(device)
             
+            # Ensure masks have channel dimension [B, 1, H, W] and float dtype
+            if masks.ndim == 3:
+                masks = masks.unsqueeze(1)
+            masks = masks.float() / 255.0  # Convert to float and normalize [0, 1]
+            
             # Forward pass
-            outputs = model(images)
+            outputs_tuple = model(images)
+            
+            # Convert to dict for criterion (same as training)
+            outputs = {
+                'main': outputs_tuple[0],      # lateral_map_5
+                'aux_1_16': outputs_tuple[1],  # lateral_map_3  
+                'aux_1_32': outputs_tuple[2],  # lateral_map_2
+                'aux_1_8': outputs_tuple[3],   # lateral_map_1
+            }
+            
             loss_dict = criterion(outputs, masks)
             loss = loss_dict['total']
             
