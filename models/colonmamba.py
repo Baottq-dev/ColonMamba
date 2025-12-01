@@ -1,8 +1,7 @@
 """
-ColonMamba - Matching ColonFormer Architecture
-Changes from ColonFormer:
-1. Encoder: MiT-B3 → Hybrid Res-VMamba
-2. Refinement: aa_kernel → MRR (Mamba Cross-Scan)
+ColonMamba - Polyp Segmentation Model
+1. Encoder: Hybrid Res-VMamba
+2. Refinement: CSRA (Cross-Scan Reverse Attention)
 Everything else IDENTICAL to ColonFormer!
 """
 import torch
@@ -11,15 +10,17 @@ import torch.nn.functional as F
 from .hybrid_encoder import HybridResVMambaEncoder
 from .uper_decoder import UPerHead
 from .cfp_module import CFPModule
-from .mrr import MambaReverseRefinement
+from .cs_ra import CSRA
 from .conv_layer import Conv
+
+
 class ColonMamba(nn.Module):
     """
     ColonMamba - Polyp Segmentation Model
     
     Architecture matches ColonFormer exactly except:
     - Encoder: Hybrid Res-VMamba instead of MiT-B3
-    - Refinement: MRR instead of Axial Attention
+    - Refinement: CSRA instead of Axial Attention
     """
     
     def __init__(
@@ -52,26 +53,25 @@ class ColonMamba(nn.Module):
         
         c1, c2, c3, c4 = encoder_channels
         
-        # ============ Decoder (SAME as ColonFormer) ============
+        # ============ Decoder ============
         self.decode_head = UPerHead(
             in_channels=encoder_channels,
             channels=64,  # Unified decoder channels
             num_classes=num_classes,
         )
         
-        # ============ CFP Modules (SAME as ColonFormer) ============
+        # ============ CFP Modules ============
         # Applied on ENCODER features, NOT decoder output
         self.CFP_1 = CFPModule(c2, d=8)  # For x2
         self.CFP_2 = CFPModule(c3, d=8)  # For x3
         self.CFP_3 = CFPModule(c4, d=8)  # For x4
         
-        # ============ MRR Modules (CHANGED: MRR instead of aa_kernel) ============
-        # These replace AA_kernel in ColonFormer
-        self.mrr_1 = MambaReverseRefinement(dim=c2, d_state=16, d_conv=4, expand=2)
-        self.mrr_2 = MambaReverseRefinement(dim=c3, d_state=16, d_conv=4, expand=2)
-        self.mrr_3 = MambaReverseRefinement(dim=c4, d_state=16, d_conv=4, expand=2)
+        # ============ CSRA Modules ============
+        self.csra1 = CSRA(dim=c2, d_state=16, d_conv=4, expand=2)
+        self.csra2 = CSRA(dim=c3, d_state=16, d_conv=4, expand=2)
+        self.csra3 = CSRA(dim=c4, d_state=16, d_conv=4, expand=2)
         
-        # ============ RA Convolutions (SAME as ColonFormer) ============
+        # ============ RA Convolutions ============
         # Refinement conv layers
         self.ra1_conv1 = Conv(c2, 32, 3, 1, padding=1, bn_acti=True)
         self.ra1_conv2 = Conv(32, 32, 3, 1, padding=1, bn_acti=True)
@@ -95,66 +95,60 @@ class ColonMamba(nn.Module):
         Returns:
             Tuple of (lateral_map_5, lateral_map_3, lateral_map_2, lateral_map_1)
         """
+        H, W = x.size(2), x.size(3)  # Get input size
+        
         # ============ Encoder ============
         features = self.encoder(x)
         x1, x2, x3, x4 = features
         
         # ============ UPerHead Decoder ============
         decoder_1 = self.decode_head([x1, x2, x3, x4])  # [B, 1, H/4, W/4]
-        lateral_map_1 = F.interpolate(decoder_1, scale_factor=4, mode='bilinear')
+        lateral_map_1 = F.interpolate(decoder_1, size=(H, W), mode='bilinear')
         
         # ============ Refinement Stage 1 (1/32 scale) ============
         decoder_2 = F.interpolate(decoder_1, size=x4.shape[2:], mode='bilinear')
         cfp_out_1 = self.CFP_3(x4)  # CFP on encoder x4
-        
-        # Reverse masking
-        decoder_2_ra = -1 * (torch.sigmoid(decoder_2)) + 1
-        
-        # MRR (REPLACES aa_kernel)
-        mrr_atten_3 = self.mrr_3(cfp_out_1, decoder_2)
-        mrr_atten_3_o = decoder_2_ra.expand(-1, cfp_out_1.size(1), -1, -1).mul(mrr_atten_3)
+                
+        # CSRA refinement
+        refined_3 = self.csra3(cfp_out_1, decoder_2)
         
         # RA convolutions
-        ra_3 = self.ra3_conv1(mrr_atten_3_o)
+        ra_3 = self.ra3_conv1(refined_3)
         ra_3 = self.ra3_conv2(ra_3)
         ra_3 = self.ra3_conv3(ra_3)
         
         x_3 = ra_3 + decoder_2
-        lateral_map_2 = F.interpolate(x_3, scale_factor=32, mode='bilinear')
+        lateral_map_2 = F.interpolate(x_3, size=(H, W), mode='bilinear')
         
         # ============ Refinement Stage 2 (1/16 scale) ============
         decoder_3 = F.interpolate(x_3, size=x3.shape[2:], mode='bilinear')
         cfp_out_2 = self.CFP_2(x3)  # CFP on encoder x3
+                
+        # CSRA refinement
+        refined_2 = self.csra2(cfp_out_2, decoder_3)
         
-        decoder_3_ra = -1 * (torch.sigmoid(decoder_3)) + 1
-        
-        # MRR (REPLACES aa_kernel_2)
-        mrr_atten_2 = self.mrr_2(cfp_out_2, decoder_3)
-        mrr_atten_2_o = decoder_3_ra.expand(-1, cfp_out_2.size(1), -1, -1).mul(mrr_atten_2)
-        
-        ra_2 = self.ra2_conv1(mrr_atten_2_o)
+        # RA convolutions
+        ra_2 = self.ra2_conv1(refined_2)
         ra_2 = self.ra2_conv2(ra_2)
         ra_2 = self.ra2_conv3(ra_2)
         
         x_2 = ra_2 + decoder_3
-        lateral_map_3 = F.interpolate(x_2, scale_factor=16, mode='bilinear')
+        lateral_map_3 = F.interpolate(x_2, size=(H, W), mode='bilinear')
         
         # ============ Refinement Stage 3 (1/8 scale) ============
         decoder_4 = F.interpolate(x_2, size=x2.shape[2:], mode='bilinear')
         cfp_out_3 = self.CFP_1(x2)  # CFP on encoder x2
+                
+        # CSRA refinement
+        refined_1 = self.csra1(cfp_out_3, decoder_4)
         
-        decoder_4_ra = -1 * (torch.sigmoid(decoder_4)) + 1
-        
-        # MRR (REPLACES aa_kernel_1)
-        mrr_atten_1 = self.mrr_1(cfp_out_3, decoder_4)
-        mrr_atten_1_o = decoder_4_ra.expand(-1, cfp_out_3.size(1), -1, -1).mul(mrr_atten_1)
-        
-        ra_1 = self.ra1_conv1(mrr_atten_1_o)
+        # RA convolutions
+        ra_1 = self.ra1_conv1(refined_1)
         ra_1 = self.ra1_conv2(ra_1)
         ra_1 = self.ra1_conv3(ra_1)
         
         x_1 = ra_1 + decoder_4
-        lateral_map_5 = F.interpolate(x_1, scale_factor=8, mode='bilinear')
+        lateral_map_5 = F.interpolate(x_1, size=(H, W), mode='bilinear')
         
         # Return in SAME order as ColonFormer
         return lateral_map_5, lateral_map_3, lateral_map_2, lateral_map_1
