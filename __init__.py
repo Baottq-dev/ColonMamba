@@ -7,9 +7,6 @@ A state-of-the-art deep learning architecture combining:
 - Mamba Reverse Refinement (efficient boundary refinement)
 """
 
-__version__ = '1.0.0'
-__author__ = 'ColonMamba Team'
-
 # Main model
 from .models import ColonMamba
 
