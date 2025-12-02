@@ -24,7 +24,7 @@ def calculate_iou(pred, target, threshold=0.5, smooth=1e-6):
         pred (Tensor or ndarray): Predictions, shape [B, 1, H, W] or [B, H, W]
         target (Tensor or ndarray): Ground truth, shape [B, 1, H, W] or [B, H, W]
         threshold (float): Threshold for binarization (default: 0.5)
-        smooth (float): Smoothing factor to avoid division by zero
+        smooth (float): Smoothing factor (not used in fixed version)
     
     Returns:
         float: Mean IoU across batch
@@ -47,12 +47,21 @@ def calculate_iou(pred, target, threshold=0.5, smooth=1e-6):
     pred_flat = pred_binary.view(pred_binary.size(0), -1)
     target_flat = target_binary.view(target_binary.size(0), -1)
     
-    # Calculate intersection and union
+    # Calculate intersection and union per sample
     intersection = (pred_flat * target_flat).sum(dim=1)
     union = pred_flat.sum(dim=1) + target_flat.sum(dim=1) - intersection
     
-    # IoU  
-    iou = (intersection + smooth) / (union + smooth)
+    # FIX: Properly handle empty cases
+    # Only calculate IoU where union > 0
+    iou = torch.zeros_like(intersection, dtype=torch.float32)
+    valid_mask = (union > 0)
+    
+    if valid_mask.any():
+        iou[valid_mask] = intersection[valid_mask] / union[valid_mask]
+    
+    # For empty predictions AND empty targets: return 0
+    # (no positive class detected, should not be rewarded)
+    # This penalizes models that predict nothing when there's nothing to predict
     
     return iou.mean().item()
 
@@ -67,7 +76,7 @@ def calculate_dice(pred, target, threshold=0.5, smooth=1e-6):
         pred (Tensor or ndarray): Predictions, shape [B, 1, H, W] or [B, H, W]
         target (Tensor or ndarray): Ground truth, shape [B, 1, H, W] or [B, H, W]
         threshold (float): Threshold for binarization (default: 0.5)
-        smooth (float): Smoothing factor
+        smooth (float): Smoothing factor (not used in fixed version)
     
     Returns:
         float: Mean Dice score across batch
@@ -93,8 +102,17 @@ def calculate_dice(pred, target, threshold=0.5, smooth=1e-6):
     # Calculate intersection
     intersection = (pred_flat * target_flat).sum(dim=1)
     
-    # Calculate Dice
-    dice = (2. * intersection + smooth) / (pred_flat.sum(dim=1) + target_flat.sum(dim=1) + smooth)
+    # Calculate denominator
+    denominator = pred_flat.sum(dim=1) + target_flat.sum(dim=1)
+    
+    # FIX: Properly handle empty cases
+    dice = torch.zeros_like(intersection, dtype=torch.float32)
+    valid_mask = (denominator > 0)
+    
+    if valid_mask.any():
+        dice[valid_mask] = (2. * intersection[valid_mask]) / denominator[valid_mask]
+    
+    # Empty cases get dice=0
     
     return dice.mean().item()
 

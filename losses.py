@@ -173,8 +173,16 @@ class IoULoss(nn.Module):
         intersection = (pred * target).sum(dim=1)
         union = pred.sum(dim=1) + target.sum(dim=1) - intersection
         
-        # IoU coefficient
-        iou = (intersection + self.smooth) / (union + self.smooth)
+        # FIX: Properly handle empty cases
+        # Only calculate IoU where union > 0
+        iou = torch.zeros_like(intersection, dtype=torch.float32)
+        valid_mask = (union > 0)
+        
+        if valid_mask.any():
+            iou[valid_mask] = intersection[valid_mask] / union[valid_mask]
+        
+        # Empty predictions should be penalized (iou=0)
+        # This prevents model from learning to output all zeros
         
         # IoU loss
         iou_loss = 1 - iou.mean()
