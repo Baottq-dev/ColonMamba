@@ -1,0 +1,25 @@
+# Core Deep Learning
+torch==2.1.2
+torchvision==0.16.2
+
+# Computer Vision & Image Processing
+opencv-python==4.9.0.80
+albumentations==1.4.0
+
+# Logging & Visualization
+tensorboard==2.15.2
+
+# Utilities
+tqdm==4.66.1
+einops==0.7.0
+matplotlib==3.8.2
+Pillow==10.2.0
+numpy==1.26.4
+
+# Notes:
+# - PyTorch 2.1.2: Stable LTS version with excellent compatibility
+# - OpenCV 4.9.0.80: Avoids known conflicts with torchvision 0.16.x
+# - Albumentations 1.4.0: Last stable before 2.x, proven compatibility
+# - TensorBoard 2.15.2: Stable, matches PyTorch 2.1.x ecosystem
+# - einops 0.7.0: Full torch.compile support
+# - NumPy 1.26.3: Compatible with PyTorch 2.1.x (avoid 2.0+ for now)
