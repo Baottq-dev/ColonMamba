@@ -24,7 +24,7 @@ def calculate_iou(pred, target, threshold=0.5, smooth=1e-6):
         pred (Tensor or ndarray): Predictions, shape [B, 1, H, W] or [B, H, W]
         target (Tensor or ndarray): Ground truth, shape [B, 1, H, W] or [B, H, W]
         threshold (float): Threshold for binarization (default: 0.5)
-        smooth (float): Smoothing factor (not used in fixed version)
+        smooth (float): Smoothing factor to avoid division by zero
     
     Returns:
         float: Mean IoU across batch
@@ -76,7 +76,7 @@ def calculate_dice(pred, target, threshold=0.5, smooth=1e-6):
         pred (Tensor or ndarray): Predictions, shape [B, 1, H, W] or [B, H, W]
         target (Tensor or ndarray): Ground truth, shape [B, 1, H, W] or [B, H, W]
         threshold (float): Threshold for binarization (default: 0.5)
-        smooth (float): Smoothing factor (not used in fixed version)
+        smooth (float): Smoothing factor
     
     Returns:
         float: Mean Dice score across batch
@@ -154,8 +154,15 @@ def calculate_precision(pred, target, threshold=0.5, smooth=1e-6):
     tp = (pred_flat * target_flat).sum(dim=1)
     fp = (pred_flat * (1 - target_flat)).sum(dim=1)
     
-    # Precision
-    precision = (tp + smooth) / (tp + fp + smooth)
+    # FIX: Properly handle empty cases
+    precision = torch.zeros_like(tp, dtype=torch.float32)
+    denominator = tp + fp
+    valid_mask = (denominator > 0)
+    
+    if valid_mask.any():
+        precision[valid_mask] = tp[valid_mask] / denominator[valid_mask]
+    
+    # Empty predictions get precision=0
     
     return precision.mean().item()
 
@@ -197,8 +204,15 @@ def calculate_recall(pred, target, threshold=0.5, smooth=1e-6):
     tp = (pred_flat * target_flat).sum(dim=1)
     fn = ((1 - pred_flat) * target_flat).sum(dim=1)
     
-    # Recall
-    recall = (tp + smooth) / (tp + fn + smooth)
+    # FIX: Properly handle empty cases
+    recall = torch.zeros_like(tp, dtype=torch.float32)
+    denominator = tp + fn
+    valid_mask = (denominator > 0)
+    
+    if valid_mask.any():
+        recall[valid_mask] = tp[valid_mask] / denominator[valid_mask]
+    
+    # Empty GT get recall=0
     
     return recall.mean().item()
 
@@ -240,8 +254,15 @@ def calculate_specificity(pred, target, threshold=0.5, smooth=1e-6):
     tn = ((1 - pred_flat) * (1 - target_flat)).sum(dim=1)
     fp = (pred_flat * (1 - target_flat)).sum(dim=1)
     
-    # Specificity
-    specificity = (tn + smooth) / (tn + fp + smooth)
+    # FIX: Properly handle empty cases
+    specificity = torch.zeros_like(tn, dtype=torch.float32)
+    denominator = tn + fp
+    valid_mask = (denominator > 0)
+    
+    if valid_mask.any():
+        specificity[valid_mask] = tn[valid_mask] / denominator[valid_mask]
+    
+    # Empty negative class get specificity=0
     
     return specificity.mean().item()
 

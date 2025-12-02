@@ -44,8 +44,12 @@ class DiceLoss(nn.Module):
         intersection = (pred * target).sum(dim=1)
         union = pred.sum(dim=1) + target.sum(dim=1)
         
-        # Dice coefficient
-        dice = (2. * intersection + self.smooth) / (union + self.smooth)
+        # FIX: Proper empty case handling
+        dice = torch.zeros_like(intersection, dtype=torch.float32)
+        valid_mask = (union > 0)
+        
+        if valid_mask.any():
+            dice[valid_mask] = (2. * intersection[valid_mask]) / union[valid_mask]
         
         # Dice loss
         dice_loss = 1 - dice.mean()
@@ -304,11 +308,19 @@ class FocalIoULoss(nn.Module):
             focal_loss = self.focal(pred, target)  # [B, 1, H, W] (per-pixel)
             focal_loss = (focal_loss * weit).sum() / weit.sum()
             
-            # Weighted IoU Loss
+            # Weighted IoU Loss - FIXED to handle empty cases properly
             pred_sigmoid = torch.sigmoid(pred)
             inter = ((pred_sigmoid * target) * weit).sum()
             union = ((pred_sigmoid + target) * weit).sum()
-            iou_loss = 1 - (inter + self.iou.smooth) / (union - inter + self.iou.smooth)
+            
+            # FIX: Proper empty case handling
+            union_minus_inter = union - inter
+            if union_minus_inter > 0:
+                iou = inter / union_minus_inter
+            else:
+                iou = torch.tensor(0.0, device=pred.device)
+            
+            iou_loss = 1 - iou
             
         else:
             # ===== Standard Loss (no edge weighting) =====
