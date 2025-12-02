@@ -122,9 +122,10 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scaler, device, e
         if masks.dim() == 3:
             masks = masks.unsqueeze(1)
         
-        # Convert masks to float and normalize to [0, 1]
-        # Masks are loaded as uint8 [0, 255], convert to float [0.0, 1.0]
-        masks = masks.float() / 255.0
+        # Convert masks to float [already in 0-1 range from dataset!]
+        # Dataset already converts masks to {0, 1} via binarization
+        # DO NOT divide by 255 again!
+        masks = masks.float()
         
         B, C, H_orig, W_orig = images.shape
         
@@ -237,10 +238,11 @@ def validate(model, val_loader, criterion, device, epoch, writer):
             images = batch['image'].to(device)
             masks = batch['mask'].to(device)
             
-            # Ensure masks have channel dimension [B, 1, H, W] and float dtype
+            # Ensure masks have channel dimension [B, 1, H, W]
             if masks.ndim == 3:
                 masks = masks.unsqueeze(1)
-            masks = masks.float() / 255.0  # Convert to float and normalize [0, 1]
+            # Masks already in [0, 1] from dataset - just convert to float
+            masks = masks.float()
             
             # Forward pass
             outputs_tuple = model(images)
