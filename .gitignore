@@ -34,7 +34,6 @@ colonmamba/
 *.pkl
 *.pickle
 *.html
-*.txt
 checkpoints/
 weights/
 pretrained/
