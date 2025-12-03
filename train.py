@@ -386,7 +386,7 @@ def train(args):
     scaler = GradScaler() if args.mixed_precision else None
     
     # Resume from checkpoint if specified
-    start_epoch = 0
+    start_epoch = 1  # 1-indexed: first epoch is 1
     best_iou = 0.0
     
     if args.resume:
@@ -395,18 +395,18 @@ def train(args):
             checkpoint = torch.load(args.resume, map_location=device)
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            start_epoch = checkpoint['epoch'] + 1
+            start_epoch = checkpoint['epoch'] + 1  # Resume from next epoch
             best_iou = checkpoint['metrics'].get('iou', 0.0)
             print(f'Resumed from epoch {start_epoch}, best IoU: {best_iou:.4f}')
         else:
             print(f'Warning: Checkpoint {args.resume} not found, starting from scratch')
     
-    # Training loop
+    # Training loop (1-indexed for human readability)
     print(f'\n[4/5] Starting training for {args.epochs} epochs...')
     print('='*60)
     
-    for epoch in range(start_epoch, args.epochs):
-        print(f'\nEpoch {epoch+1}/{args.epochs}')
+    for epoch in range(start_epoch, args.epochs + 1):  # 1-indexed: 1, 2, 3, ..., epochs
+        print(f'\nEpoch {epoch}/{args.epochs}')
         print('-' * 40)
         
         # Train
@@ -422,10 +422,10 @@ def train(args):
         # Update learning rate
         lr_scheduler.step()
         current_lr = optimizer.param_groups[0]['lr']
-        writer.add_scalar('Train/LR', current_lr, epoch)
+        writer.add_scalar('Train/LR', current_lr, epoch - 1)  # TensorBoard uses 0-indexed
         
         # Print epoch summary
-        print(f'\nEpoch {epoch+1} Summary:')
+        print(f'\nEpoch {epoch} Summary:')
         print(f'  Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}')
         print(f'  Train IoU: {train_metrics["iou"]:.4f} | Val IoU: {val_metrics["iou"]:.4f}')
         print(f'  Train Dice: {train_metrics["dice"]:.4f} | Val Dice: {val_metrics["dice"]:.4f}')
@@ -437,11 +437,11 @@ def train(args):
             best_iou = val_metrics['iou']
         
         # Save latest checkpoint
-        checkpoint_path = os.path.join(args.save_dir, f'checkpoint_epoch{epoch+1}.pth')
+        checkpoint_path = os.path.join(args.save_dir, f'checkpoint_epoch{epoch}.pth')
         save_checkpoint(model, optimizer, epoch, val_metrics, checkpoint_path, is_best=is_best)
         
         # Save every N epochs
-        if (epoch + 1) % args.save_freq == 0:
+        if epoch % args.save_freq == 0:
             print(f'✓ Saved checkpoint to {checkpoint_path}')
     
     print('\n' + '='*60)
