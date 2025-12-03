@@ -293,10 +293,7 @@ def validate(model, val_loader, criterion, device, epoch, writer):
 def save_checkpoint(model, optimizer, epoch, metrics, save_dir, is_best=False):
     """
     Save model checkpoint.
-    
-    Saves two files:
-    - checkpoint_last.pth: Always updated with latest epoch
-    - checkpoint_best.pth: Updated only when is_best=True
+
     """
     checkpoint = {
         'epoch': epoch,
