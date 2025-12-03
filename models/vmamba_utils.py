@@ -317,11 +317,18 @@ class VSSBlock(nn.Module):
     Vision State Space Block - Basic building block combining SS2D with normalization.
     
     This is typically used multiple times in VMamba stages.
+    
+    Architecture (from pretrained VMamba):
+    - ln_1: Pre-normalization before SS2D
+    - ss2d: Selective Scan 2D (has out_norm inside)
+    - Residual: x + ss2d(ln_1(x))
     """
     
     def __init__(self, d_model, d_state=16, d_conv=4, expand=2, dropout=0., **kwargs):
         super().__init__()
-        self.norm = nn.LayerNorm(d_model)
+        # Pretrained VMamba HAS ln_1 (pre-norm)!
+        self.ln_1 = nn.LayerNorm(d_model)
+        
         self.ss2d = SS2D(
             d_model=d_model,
             d_state=d_state,
@@ -338,7 +345,8 @@ class VSSBlock(nn.Module):
         Returns:
             Tensor: [B, H, W, C]
         """
-        return x + self.ss2d(self.norm(x))
+        # Pretrained: x + ss2d(ln_1(x))
+        return x + self.ss2d(self.ln_1(x))
 
 
 if __name__ == '__main__':

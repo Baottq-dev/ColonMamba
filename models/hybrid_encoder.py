@@ -93,8 +93,10 @@ class VMambaStage(nn.Module):
             for _ in range(depth)
         ])
         
-        # Output norm
-        self.norm = nn.LayerNorm(block_dim)
+        # NOTE: Pretrained VMamba does NOT have stage-level norm!
+        # Only has out_norm inside SS2D module.
+        # Commented out to match pretrained architecture exactly.
+        # self.norm = nn.LayerNorm(block_dim)
     
     def forward(self, x):
         """
@@ -111,8 +113,8 @@ class VMambaStage(nn.Module):
         for block in self.blocks:
             x = block(x)
         
-        # Final normalization
-        x = self.norm(x)
+        # NOTE: No final normalization (pretrained doesn't have it)
+        # x = self.norm(x)  # Commented out
         
         return x
 
@@ -283,13 +285,17 @@ class HybridResVMambaEncoder(nn.Module):
                 elif 'layers.2.' in key:
                     # Remove 'layers.2.' prefix and map to stage3
                     new_key = key.replace('layers.2.', '')
-                    new_key = new_key.replace('ln_1', 'norm')
+                    # Map block-level norm (ln_1) and stage-level norm
+                    # ln_1 inside blocks, norm at stage level
+                    # Keep both - they should map correctly by name
                     new_key = new_key.replace('self_attention', 'ss2d')
                     stage3_dict[new_key] = value
                 elif 'layers.3.' in key:
                     # Remove 'layers.3.' prefix and map to stage4
                     new_key = key.replace('layers.3.', '')
-                    new_key = new_key.replace('ln_1', 'norm')
+                    # Map block-level norm (ln_1) and stage-level norm
+                    # ln_1 inside blocks, norm at stage level
+                    # Keep both - they should map correctly by name
                     new_key = new_key.replace('self_attention', 'ss2d')
                     stage4_dict[new_key] = value
             
@@ -318,7 +324,10 @@ class HybridResVMambaEncoder(nn.Module):
                     for i, key in enumerate(list(missing)[:10]):
                         print(f"    {i+1}. {key}")
                 if unexpected:
-                    print(f"  Unexpected keys: {len(unexpected)}")
+                    print(f"  🔍 Unexpected keys: {len(unexpected)}")
+                    print(f"  First 10 unexpected keys:")
+                    for i, key in enumerate(list(unexpected)[:10]):
+                        print(f"    {i+1}. {key}")
             
             # 3. Load Stage 4 weights
             if len(stage4_dict) > 0:
@@ -330,7 +339,10 @@ class HybridResVMambaEncoder(nn.Module):
                     for i, key in enumerate(list(missing)[:10]):
                         print(f"    {i+1}. {key}")
                 if unexpected:
-                    print(f"  Unexpected keys: {len(unexpected)}")
+                    print(f"  🔍 Unexpected keys: {len(unexpected)}")
+                    print(f"  First 10 unexpected keys:")
+                    for i, key in enumerate(list(unexpected)[:10]):
+                        print(f"    {i+1}. {key}")
             
             if len(stage3_dict) == 0 and len(stage4_dict) == 0:
                 print("Warning: No matching VMamba weights found in checkpoint!")
