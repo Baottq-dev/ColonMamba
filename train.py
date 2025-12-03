@@ -290,8 +290,14 @@ def validate(model, val_loader, criterion, device, epoch, writer):
     return avg_loss, metrics_avg
 
 
-def save_checkpoint(model, optimizer, epoch, metrics, save_path, is_best=False):
-    """Save model checkpoint"""
+def save_checkpoint(model, optimizer, epoch, metrics, save_dir, is_best=False):
+    """
+    Save model checkpoint.
+    
+    Saves two files:
+    - checkpoint_last.pth: Always updated with latest epoch
+    - checkpoint_best.pth: Updated only when is_best=True
+    """
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -299,12 +305,15 @@ def save_checkpoint(model, optimizer, epoch, metrics, save_path, is_best=False):
         'metrics': metrics,
     }
     
-    torch.save(checkpoint, save_path)
+    # Always save latest checkpoint
+    last_path = os.path.join(save_dir, 'checkpoint_last.pth')
+    torch.save(checkpoint, last_path)
     
+    # Save best checkpoint if this is the best model so far
     if is_best:
-        best_path = save_path.replace('.pth', '_best.pth')
+        best_path = os.path.join(save_dir, 'checkpoint_best.pth')
         torch.save(checkpoint, best_path)
-        print(f'✓ Saved best model to {best_path}')
+        print(f'✓ New best model! Val IoU: {metrics["iou"]:.4f} (saved to checkpoint_best.pth)')
 
 
 def train(args):
@@ -386,7 +395,7 @@ def train(args):
     scaler = GradScaler() if args.mixed_precision else None
     
     # Resume from checkpoint if specified
-    start_epoch = 1  # 1-indexed: first epoch is 1
+    start_epoch = 1  
     best_iou = 0.0
     
     if args.resume:
@@ -395,17 +404,17 @@ def train(args):
             checkpoint = torch.load(args.resume, map_location=device)
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            start_epoch = checkpoint['epoch'] + 1  # Resume from next epoch
+            start_epoch = checkpoint['epoch'] + 1  
             best_iou = checkpoint['metrics'].get('iou', 0.0)
             print(f'Resumed from epoch {start_epoch}, best IoU: {best_iou:.4f}')
         else:
             print(f'Warning: Checkpoint {args.resume} not found, starting from scratch')
     
-    # Training loop (1-indexed for human readability)
+    # Training loop
     print(f'\n[4/5] Starting training for {args.epochs} epochs...')
     print('='*60)
     
-    for epoch in range(start_epoch, args.epochs + 1):  # 1-indexed: 1, 2, 3, ..., epochs
+    for epoch in range(start_epoch, args.epochs + 1):  
         print(f'\nEpoch {epoch}/{args.epochs}')
         print('-' * 40)
         
@@ -422,7 +431,7 @@ def train(args):
         # Update learning rate
         lr_scheduler.step()
         current_lr = optimizer.param_groups[0]['lr']
-        writer.add_scalar('Train/LR', current_lr, epoch - 1)  # TensorBoard uses 0-indexed
+        writer.add_scalar('Train/LR', current_lr, epoch - 1) 
         
         # Print epoch summary
         print(f'\nEpoch {epoch} Summary:')
@@ -436,13 +445,8 @@ def train(args):
         if is_best:
             best_iou = val_metrics['iou']
         
-        # Save latest checkpoint
-        checkpoint_path = os.path.join(args.save_dir, f'checkpoint_epoch{epoch}.pth')
-        save_checkpoint(model, optimizer, epoch, val_metrics, checkpoint_path, is_best=is_best)
-        
-        # Save every N epochs
-        if epoch % args.save_freq == 0:
-            print(f'✓ Saved checkpoint to {checkpoint_path}')
+        # Save checkpoint (always saves last, conditionally saves best)
+        save_checkpoint(model, optimizer, epoch, val_metrics, args.save_dir, is_best=is_best)
     
     print('\n' + '='*60)
     print(f'[5/5] Training completed!')
