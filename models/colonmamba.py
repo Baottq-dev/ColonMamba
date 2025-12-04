@@ -31,11 +31,13 @@ class ColonMamba(nn.Module):
         vmamba_checkpoint_path=None,
         channel_mode='project',  # 'project' or 'adapt'
         freeze_bn=False,
+        dropout=0.1,
     ):
         super().__init__()
         
         self.num_classes = num_classes
         self.channel_mode = channel_mode
+        self.dropout = dropout
         
         # ============ Encoder (CHANGED from ColonFormer) ============
         self.encoder = HybridResVMambaEncoder(
@@ -56,20 +58,21 @@ class ColonMamba(nn.Module):
         # ============ Decoder ============
         self.decode_head = UPerHead(
             in_channels=encoder_channels,
-            channels=64,  # Unified decoder channels
+            channels=64,
             num_classes=num_classes,
+            dropout=dropout,  
         )
         
         # ============ CFP Modules ============
         # Applied on ENCODER features, NOT decoder output
-        self.CFP_1 = CFPModule(c2, d=8)  # For x2
-        self.CFP_2 = CFPModule(c3, d=8)  # For x3
-        self.CFP_3 = CFPModule(c4, d=8)  # For x4
+        self.CFP_1 = CFPModule(c2, d=8, dropout=dropout)
+        self.CFP_2 = CFPModule(c3, d=8, dropout=dropout)
+        self.CFP_3 = CFPModule(c4, d=8, dropout=dropout)
         
         # ============ CSRA Modules ============
-        self.csra1 = CSRA(dim=c2, d_state=16, d_conv=4, expand=2)
-        self.csra2 = CSRA(dim=c3, d_state=16, d_conv=4, expand=2)
-        self.csra3 = CSRA(dim=c4, d_state=16, d_conv=4, expand=2)
+        self.csra1 = CSRA(dim=c2, d_state=16, d_conv=4, expand=2, dropout=dropout)
+        self.csra2 = CSRA(dim=c3, d_state=16, d_conv=4, expand=2, dropout=dropout)
+        self.csra3 = CSRA(dim=c4, d_state=16, d_conv=4, expand=2, dropout=dropout)
         
         # ============ RA Convolutions ============
         # Refinement conv layers

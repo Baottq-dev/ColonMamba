@@ -33,13 +33,15 @@ class CFPModule(nn.Module):
         d (int): Base dilation rate (default: 8)
         KSize (int): Kernel size for initial reduction (default: 3)
         dkSize (int): Kernel size for dilated convs (default: 3)
+        dropout (float): Dropout rate (default: 0.1)
     """
     
-    def __init__(self, nIn, d=8, KSize=3, dkSize=3):
+    def __init__(self, nIn, d=8, KSize=3, dkSize=3, dropout=0.1):
         super(CFPModule, self).__init__()
         
         self.nIn = nIn
         self.d = d
+        self.dropout = dropout
         
         # Pre-normalization
         self.bn_relu_1 = nn.Sequential(
@@ -57,7 +59,8 @@ class CFPModule(nn.Module):
         self.conv1x1_1 = nn.Sequential(
             nn.Conv2d(nIn, nIn // 4, KSize, 1, padding=1, bias=False),
             nn.BatchNorm2d(nIn // 4, eps=1e-3),
-            nn.PReLU(nIn // 4)
+            nn.PReLU(nIn // 4),
+            nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()  # ← ADD
         )
         
         # ===== Branch 1: dilation = 1 =====
@@ -190,6 +193,10 @@ class CFPModule(nn.Module):
         # ===== Post-processing =====
         output = self.bn_relu_2(output)
         output = self.conv1x1(output)  # [B, C, H, W]
+
+        # ===== Dropout =====
+        if self.dropout > 0:
+            output = F.dropout2d(output, p=self.dropout, training=self.training)
         
         # ===== Residual connection =====
         output = output + identity

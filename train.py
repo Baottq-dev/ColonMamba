@@ -346,6 +346,7 @@ def train(args):
         pretrained_vmamba=True,  
         vmamba_checkpoint_path=args.vmamba_ckpt,
         channel_mode=args.channel_mode,
+        dropout=args.dropout,
     ).to(device)
     
     param_count, size_mb = model.get_model_size()
@@ -479,12 +480,14 @@ def main():
                        help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-4,
                        help='Learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-4,
+    parser.add_argument('--weight_decay', type=float, default=5e-4,
                        help='Weight decay')
     parser.add_argument('--aux_weight', type=float, default=0.4,
                        help='Auxiliary loss weight')
     parser.add_argument('--image_size', type=int, default=352,
                        help='Input image size')
+    parser.add_argument('--dropout', type=float, default=0.1,
+                       help='Dropout rate')
     
     # Loss configuration
     parser.add_argument('--use_edge_weight', action='store_true', default=True,

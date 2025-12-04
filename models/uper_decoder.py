@@ -11,13 +11,14 @@ import torch.nn.functional as F
 class ConvBlock(nn.Module):
     """Conv block with residual connection"""
     
-    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1):
+    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1, dropout=0.1):
         super().__init__()
         
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
         )
         
         self.residual = None
@@ -78,18 +79,19 @@ class UPerHead(nn.Module):
     but implementation is completely different (concat-based design)
     """
     
-    def __init__(self, in_channels=[64, 128, 320, 512], channels=64, num_classes=1):
+    def __init__(self, in_channels=[64, 128, 320, 512], channels=64, num_classes=1, dropout=0.1):
         super().__init__()
         
         self.in_channels = in_channels
+        self.dropout = dropout
         
         total_channels = sum(in_channels)  # 1024
         
         # Conv blocks
-        self.conv_block1 = ConvBlock(total_channels, 512)
-        self.conv_block2 = ConvBlock(512, 256)
-        self.conv_block3 = ConvBlock(256, 128)
-        self.conv_block4 = ConvBlock(128, 128)
+        self.conv_block1 = ConvBlock(total_channels, 512, dropout=dropout)
+        self.conv_block2 = ConvBlock(512, 256, dropout=dropout)
+        self.conv_block3 = ConvBlock(256, 128, dropout=dropout)
+        self.conv_block4 = ConvBlock(128, 128, dropout=dropout)
         
         # PPM
         self.ppm = PPM(in_channels=128, out_channels=64)
@@ -99,6 +101,7 @@ class UPerHead(nn.Module):
             nn.Conv2d(64, 32, 3, padding=1, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout) if dropout > 0 else nn.Identity(),  # ← ADD
             nn.Conv2d(32, num_classes, 1)
         )
     

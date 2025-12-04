@@ -21,24 +21,26 @@ class CSRA(nn.Module):
         d_state: SSM state dimension
         d_conv: Conv kernel size for SS2D
         expand: Expansion factor
+        dropout: Dropout rate
     """
     
-    def __init__(self, dim, d_state=16, d_conv=4, expand=2):
+    def __init__(self, dim, d_state=16, d_conv=4, expand=2, dropout=0.1):
         super().__init__()
         
         self.dim = dim
+        self.dropout = dropout
         
         # Feature normalization
         self.norm = nn.BatchNorm2d(dim)
         
         # Cross-Scan module (SS2D from VMamba)
         self.cross_scan = SS2D(
-            d_model=dim,
-            d_state=d_state,
-            d_conv=d_conv,
-            expand=expand,
-            dropout=0.0
-        )
+                    d_model=dim,
+                    d_state=d_state,
+                    d_conv=d_conv,
+                    expand=expand,
+                    dropout=dropout  
+                )
         
         # Mask normalization
         self.mask_norm = nn.BatchNorm2d(1)
@@ -47,13 +49,15 @@ class CSRA(nn.Module):
         self.pre_proj = nn.Sequential(
             nn.Conv2d(dim, dim, 1, bias=False),
             nn.BatchNorm2d(dim),
-            nn.GELU()
+            nn.GELU(),
+            nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()  # ← ADD
         )
         
         self.post_proj = nn.Sequential(
             nn.Conv2d(dim, dim, 1, bias=False),
             nn.BatchNorm2d(dim),
-            nn.GELU()
+            nn.GELU(),
+            nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()  # ← ADD
         )
         
         # Learnable gate
@@ -92,6 +96,10 @@ class CSRA(nn.Module):
         
         # Post projection
         refined = self.post_proj(attended)
+
+        # Add dropout before residual
+        if self.dropout_rate > 0:
+            refined = F.dropout2d(refined, p=self.dropout_rate, training=self.training)
         
         # Gated residual
         output = feature + self.gate * refined
