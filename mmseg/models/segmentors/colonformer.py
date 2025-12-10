@@ -11,6 +11,7 @@ import cv2
 from .lib.conv_layer import Conv, BNPReLU
 from .lib.axial_atten import AA_kernel
 from .lib.context_module import CFPModule
+from mmengine.runner import load_checkpoint
 
 
 @MODELS.register_module()
@@ -29,7 +30,8 @@ class ColonFormer(nn.Module):
                  auxiliary_head=None,
                  train_cfg=None,
                  test_cfg=None,
-                 pretrained=None):
+                 pretrained=None,
+                 use_ss2d=False):
         super(ColonFormer, self).__init__()
         self.backbone = builder.build_backbone(backbone)
         if neck is not None:
@@ -42,43 +44,118 @@ class ColonFormer(nn.Module):
         self.align_corners = self.decode_head.align_corners
         self.num_classes = self.decode_head.num_classes
 
-        self.init_weights(pretrained=pretrained)
+        # Detect backbone type and get output channels
+        backbone_type = backbone.get('type', 'MixVisionTransformer')
+        if 'VSSM' in backbone_type or 'VMamba' in backbone_type:
+            # VMamba: calculate channels from base dimension
+            base_dim = backbone.get('dims', 96)
+            if isinstance(base_dim, int):
+                # Calculate channel progression: dims * 2^stage
+                self.c1 = base_dim
+                self.c2 = base_dim * 2
+                self.c3 = base_dim * 4
+                self.c4 = base_dim * 8
+            else:
+                # If dims is already a list [c1, c2, c3, c4]
+                self.c1, self.c2, self.c3, self.c4 = base_dim
+            print(f"[ColonFormer] Using VMamba backbone with channels: [{self.c1}, {self.c2}, {self.c3}, {self.c4}]")
+        else:
+            # SegFormer (MiT) channels: [64, 128, 320, 512]
+            self.c1, self.c2, self.c3, self.c4 = 64, 128, 320, 512
+            print(f"[ColonFormer] Using SegFormer backbone with channels: [{self.c1}, {self.c2}, {self.c3}, {self.c4}]")
         
-        self.CFP_1 = CFPModule(128, d = 8)
-        self.CFP_2 = CFPModule(320, d = 8)
-        self.CFP_3 = CFPModule(512, d = 8)
+        # Dynamic decoder initialization based on backbone channels
+        self.CFP_1 = CFPModule(self.c2, d=8)
+        self.CFP_2 = CFPModule(self.c3, d=8)
+        self.CFP_3 = CFPModule(self.c4, d=8)
 
-        self.ra1_conv1 = Conv(128,32,3,1,padding=1,bn_acti=True)
-        self.ra1_conv2 = Conv(32,32,3,1,padding=1,bn_acti=True)
-        self.ra1_conv3 = Conv(32,1,3,1,padding=1,bn_acti=True)
+        self.ra1_conv1 = Conv(self.c2, 32, 3, 1, padding=1, bn_acti=True)
+        self.ra1_conv2 = Conv(32, 32, 3, 1, padding=1, bn_acti=True)
+        self.ra1_conv3 = Conv(32, 1, 3, 1, padding=1, bn_acti=True)
         
-        self.ra2_conv1 = Conv(320,32,3,1,padding=1,bn_acti=True)
-        self.ra2_conv2 = Conv(32,32,3,1,padding=1,bn_acti=True)
-        self.ra2_conv3 = Conv(32,1,3,1,padding=1,bn_acti=True)
+        self.ra2_conv1 = Conv(self.c3, 32, 3, 1, padding=1, bn_acti=True)
+        self.ra2_conv2 = Conv(32, 32, 3, 1, padding=1, bn_acti=True)
+        self.ra2_conv3 = Conv(32, 1, 3, 1, padding=1, bn_acti=True)
         
-        self.ra3_conv1 = Conv(512,32,3,1,padding=1,bn_acti=True)
-        self.ra3_conv2 = Conv(32,32,3,1,padding=1,bn_acti=True)
-        self.ra3_conv3 = Conv(32,1,3,1,padding=1,bn_acti=True)
+        self.ra3_conv1 = Conv(self.c4, 32, 3, 1, padding=1, bn_acti=True)
+        self.ra3_conv2 = Conv(32, 32, 3, 1, padding=1, bn_acti=True)
+        self.ra3_conv3 = Conv(32, 1, 3, 1, padding=1, bn_acti=True)
         
-        self.aa_kernel_1 = AA_kernel(128,128)
-        self.aa_kernel_2 = AA_kernel(320,320)
-        self.aa_kernel_3 = AA_kernel(512,512)
+        # Spatial Attention: Hybrid mode (AA_kernel or SS2D)
+        if use_ss2d:
+            # Use SS2D from VMamba for better spatial modeling
+            try:
+                from mmseg.models.backbones.vmamba import SS2D
+            except ImportError as e:
+                raise ImportError(
+                    "SS2D mode requires mamba-ssm to be installed. "
+                    "Please run: pip install mamba-ssm (requires CUDA toolkit)\n"
+                    f"Original error: {e}"
+                )
+            print("[ColonFormer] Using SS2D for spatial attention (VMamba-style)")
+            self.aa_kernel_1 = SS2D(
+                d_model=self.c2,
+                d_state=16,
+                ssm_ratio=2.0,
+                dt_rank='auto',
+                d_conv=3,
+                forward_type='v2',
+                channel_first=True  # Critical for [B,C,H,W] format
+            )
+            self.aa_kernel_2 = SS2D(
+                d_model=self.c3,
+                d_state=16,
+                ssm_ratio=2.0,
+                dt_rank='auto',
+                d_conv=3,
+                forward_type='v2',
+                channel_first=True
+            )
+            self.aa_kernel_3 = SS2D(
+                d_model=self.c4,
+                d_state=16,
+                ssm_ratio=2.0,
+                dt_rank='auto',
+                d_conv=3,
+                forward_type='v2',
+                channel_first=True
+            )
+        else:
+            # Use original Axial Attention
+            print("[ColonFormer] Using Axial Attention for spatial attention (original)")
+            self.aa_kernel_1 = AA_kernel(self.c2, self.c2)
+            self.aa_kernel_2 = AA_kernel(self.c3, self.c3)
+            self.aa_kernel_3 = AA_kernel(self.c4, self.c4)
+        
+        # Initialize weights AFTER all modules are created
+        self.init_weights(pretrained=pretrained)
 
     def init_weights(self, pretrained=None):
-        """Initialize the weights in backbone and heads."""
-        if pretrained is not None:
-            from mmengine.runner import load_checkpoint
-            load_checkpoint(self.backbone, pretrained, map_location='cpu', strict=False, logger='current')
-        else:
-            self.backbone.init_weights()
+        """Initialize the weights in backbone and heads.
+        Args:
+            pretrained (str): Path to pretrained backbone weights. Required.
+        
+        Raises:
+            ValueError: If pretrained is None.
+        """
+        if pretrained is None:
+            raise ValueError(
+                "Please provide pretrained path when initializing the model."
+            )
+    
+        
+        load_checkpoint(self.backbone, pretrained, map_location='cpu', strict=False, logger='current')
         self.decode_head.init_weights()
         
     def forward(self, x):
         segout = self.backbone(x)
-        x1 = segout[0]  #  64x88x88
-        x2 = segout[1]  # 128x44x44
-        x3 = segout[2]  # 320x22x22
-        x4 = segout[3]  # 512x11x11
+        # Note: Channel values depend on backbone type
+        # SegFormer: [64, 128, 320, 512]
+        # VMamba:    [96, 192, 384, 768]
+        x1 = segout[0]  # c1 x 88x88
+        x2 = segout[1]  # c2 x 44x44
+        x3 = segout[2]  # c3 x 22x22
+        x4 = segout[3]  # c4 x 11x11
 
         decoder_1 = self.decode_head.forward([x1, x2, x3, x4]) # 88x88
         lateral_map_1 = F.interpolate(decoder_1, scale_factor=4, mode='bilinear')
@@ -90,7 +167,7 @@ class ColonFormer(nn.Module):
         decoder_2_ra = -1*(torch.sigmoid(decoder_2)) + 1
         aa_atten_3 = self.aa_kernel_3(cfp_out_1)
         aa_atten_3 += cfp_out_1
-        aa_atten_3_o = decoder_2_ra.expand(-1, 512, -1, -1).mul(aa_atten_3)
+        aa_atten_3_o = decoder_2_ra.expand(-1, self.c4, -1, -1).mul(aa_atten_3)
         
         ra_3 = self.ra3_conv1(aa_atten_3_o) 
         ra_3 = self.ra3_conv2(ra_3) 
@@ -106,7 +183,7 @@ class ColonFormer(nn.Module):
         decoder_3_ra = -1*(torch.sigmoid(decoder_3)) + 1
         aa_atten_2 = self.aa_kernel_2(cfp_out_2)
         aa_atten_2 += cfp_out_2
-        aa_atten_2_o = decoder_3_ra.expand(-1, 320, -1, -1).mul(aa_atten_2)
+        aa_atten_2_o = decoder_3_ra.expand(-1, self.c3, -1, -1).mul(aa_atten_2)
         
         ra_2 = self.ra2_conv1(aa_atten_2_o) 
         ra_2 = self.ra2_conv2(ra_2) 
@@ -122,7 +199,7 @@ class ColonFormer(nn.Module):
         decoder_4_ra = -1*(torch.sigmoid(decoder_4)) + 1
         aa_atten_1 = self.aa_kernel_1(cfp_out_3)
         aa_atten_1 += cfp_out_3
-        aa_atten_1_o = decoder_4_ra.expand(-1, 128, -1, -1).mul(aa_atten_1)
+        aa_atten_1_o = decoder_4_ra.expand(-1, self.c2, -1, -1).mul(aa_atten_1)
         
         ra_1 = self.ra1_conv1(aa_atten_1_o) 
         ra_1 = self.ra1_conv2(ra_1) 

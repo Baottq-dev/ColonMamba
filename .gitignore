@@ -23,19 +23,23 @@ ENV/
 # Logs
 *.log
 
-# Model files và datasets (thường rất lớn)
+# Model files and datasets
 *.pth
 *.pkl
 *.pkl.json
 *.log.json
+*.json
+*.zip
 data.zip
 pretrained/
 Polyp datasets/
 TrainDataset/
 TestDataset/
 snapshots/
+data/
+experiment/
 
-# Cache và temporary files
+# Cache and temporary files
 .cache/
 .pytest_cache/
 .mypy_cache/

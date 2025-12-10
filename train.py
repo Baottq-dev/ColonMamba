@@ -88,6 +88,40 @@ BACKBONE_CONFIGS = {
         strides=[4, 2, 2, 2],
         sr_ratios=[8, 4, 2, 1],
         out_indices=(0, 1, 2, 3)),
+    # VMamba backbones
+    'vmamba_tiny': dict(
+        type='Backbone_VSSM',
+        dims=96,
+        depths=[2, 2, 5, 2],
+        out_indices=(0, 1, 2, 3),
+        drop_path_rate=0.2,
+        patch_size=4,
+        norm_layer='ln',
+        downsample_version='v2',
+        patchembed_version='v2',
+    ),
+    'vmamba_small': dict(
+        type='Backbone_VSSM',
+        dims=96,
+        depths=[2, 2, 9, 2],
+        out_indices=(0, 1, 2, 3),
+        drop_path_rate=0.3,
+        patch_size=4,
+        norm_layer='ln',
+        downsample_version='v2',
+        patchembed_version='v2',
+    ),
+    'vmamba_base': dict(
+        type='Backbone_VSSM',
+        dims=128,
+        depths=[2, 2, 15, 2],
+        out_indices=(0, 1, 2, 3),
+        drop_path_rate=0.5,
+        patch_size=4,
+        norm_layer='ln',
+        downsample_version='v2',
+        patchembed_version='v2',
+    ),
 }
 
 BACKBONE_CHANNELS = {
@@ -97,6 +131,10 @@ BACKBONE_CHANNELS = {
     'b3': [64, 128, 320, 512],
     'b4': [64, 128, 320, 512],
     'b5': [64, 128, 320, 512],
+    # VMamba channels
+    'vmamba_tiny': [96, 192, 384, 768],
+    'vmamba_small': [96, 192, 384, 768],
+    'vmamba_base': [128, 256, 512, 1024],
 }
 
 def get_backbone_cfg(name):
@@ -142,22 +180,14 @@ class Dataset(torch.utils.data.Dataset):
 epsilon = 1e-7
 
 def recall_m(y_true, y_pred):
-    # Binarize predictions và ground truth với threshold 0.5
-    y_pred_binary = (y_pred > 0.5).float()
-    y_true_binary = (y_true > 0.5).float()
-    
-    true_positives = torch.sum(y_pred_binary * y_true_binary)
-    possible_positives = torch.sum(y_true_binary)
+    true_positives = torch.sum(torch.round(torch.clip(y_true * y_pred, 0, 1)))
+    possible_positives = torch.sum(torch.round(torch.clip(y_true, 0, 1)))
     recall = true_positives / (possible_positives + epsilon)
     return recall
 
 def precision_m(y_true, y_pred):
-    # Binarize predictions và ground truth với threshold 0.5
-    y_pred_binary = (y_pred > 0.5).float()
-    y_true_binary = (y_true > 0.5).float()
-    
-    true_positives = torch.sum(y_pred_binary * y_true_binary)
-    predicted_positives = torch.sum(y_pred_binary)
+    true_positives = torch.sum(torch.round(torch.clip(y_true * y_pred, 0, 1)))
+    predicted_positives = torch.sum(torch.round(torch.clip(y_pred, 0, 1)))
     precision = true_positives / (predicted_positives + epsilon)
     return precision
 
@@ -252,9 +282,8 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
             # with torch.autograd.set_detect_anomaly(True):
             #loss = nn.functional.binary_cross_entropy(map1, gts)
             # ---- metrics ----
-            map4_sigmoid = torch.sigmoid(map4)  # Convert logits → probabilities [0, 1]
-            dice_score = dice_m(map4_sigmoid, gts)
-            iou_score = iou_m(map4_sigmoid, gts)
+            dice_score = dice_m(map4, gts)
+            iou_score = iou_m(map4, gts)
             # ---- backward ----
             loss.backward()
             clip_gradient(optimizer, args.clip)
@@ -302,6 +331,8 @@ if __name__ == '__main__':
                         default='') 
     parser.add_argument('--pretrained_path', type=str, help='path to pretrained backbone weights',
                         default='')  
+    parser.add_argument('--use_ss2d', action='store_true',
+                        help='Use SS2D instead of Axial Attention in decoder for better spatial modeling')
     args = parser.parse_args()
 
     logging.getLogger('mmengine').setLevel(logging.WARNING)
@@ -348,7 +379,12 @@ if __name__ == '__main__':
                 auxiliary_head=None,
                 train_cfg=dict(),
                 test_cfg=dict(mode='whole'),
-                pretrained=args.pretrained_path if args.pretrained_path else 'pretrained/mit_{}_mmseg.pth'.format(args.backbone)).cuda()
+                use_ss2d=args.use_ss2d,  # NEW: Enable SS2D mode
+                pretrained=args.pretrained_path if args.pretrained_path else (
+                    'pretrained/vssm_{}.pth'.format(args.backbone.replace('vmamba_', '')) 
+                    if 'vmamba' in args.backbone 
+                    else 'pretrained/mit_{}.pth'.format(args.backbone)
+                )).cuda()
 
 
     
@@ -400,3 +436,5 @@ if __name__ == '__main__':
             best_path = save_path + 'best.pth'
             torch.save(checkpoint, best_path)
             print(f'✨ [Saved Best Model] IoU: {iou:.4f} -> {best_path}')
+
+            
