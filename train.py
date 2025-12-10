@@ -9,6 +9,7 @@ import sys
 import time
 import numpy as np
 import cv2
+import csv
 from tqdm import tqdm
 from glob import glob
 import matplotlib.pyplot as plt
@@ -343,6 +344,15 @@ if __name__ == '__main__':
     else:
         print("Save path existed")
 
+    # Setup training log CSV
+    log_path = os.path.join(save_path, 'training_log.csv')
+    log_exists = os.path.exists(log_path)
+    log_file = open(log_path, 'a', newline='')
+    log_writer = csv.writer(log_file)
+    if not log_exists:
+        log_writer.writerow(['epoch', 'loss', 'dice', 'iou', 'lr', 'best_iou', 'timestamp'])
+        log_file.flush()
+
     train_img_paths = []
     train_mask_paths = []
     train_img_paths = glob('{}/image/*'.format(args.train_path))
@@ -412,6 +422,25 @@ if __name__ == '__main__':
         # Train and get metrics
         loss, dice, iou = train(train_loader, model, optimizer, epoch, lr_scheduler, args)
         
+        # Get current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        
+        # Update best IoU
+        if iou > best_iou:
+            best_iou = iou
+        
+        # Log to CSV
+        log_writer.writerow([
+            epoch,
+            f'{loss:.4f}',
+            f'{dice:.4f}',
+            f'{iou:.4f}',
+            f'{current_lr:.6f}',
+            f'{best_iou:.4f}',
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ])
+        log_file.flush()
+        
         # Create checkpoint with metrics
         checkpoint = {
             'epoch': epoch + 1,
@@ -436,5 +465,7 @@ if __name__ == '__main__':
             best_path = save_path + 'best.pth'
             torch.save(checkpoint, best_path)
             print(f'✨ [Saved Best Model] IoU: {iou:.4f} -> {best_path}')
-
-            
+    
+    # Close log file
+    log_file.close()
+    print(f'[Training Complete] Log saved to: {log_path}')
