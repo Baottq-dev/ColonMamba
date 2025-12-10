@@ -23,8 +23,8 @@ from torch.autograd import Variable
 from datetime import datetime
 import torch.nn.functional as F
 
-# from albumentations.augmentations import transforms
-# from albumentations.core.composition import Compose, OneOf
+from albumentations.augmentations import transforms
+from albumentations.core.composition import Compose, OneOf
 
 from mmseg import __version__
 from mmseg.models.segmentors import ColonFormer as UNet
