@@ -12,6 +12,7 @@ from .lib.conv_layer import Conv, BNPReLU
 from .lib.axial_atten import AA_kernel
 from .lib.context_module import CFPModule
 from mmengine.runner import load_checkpoint
+from ..utils.weight_converter import load_pretrained_mit
 
 
 @MODELS.register_module()
@@ -142,10 +143,16 @@ class ColonFormer(nn.Module):
             raise ValueError(
                 "Please provide pretrained path when initializing the model."
             )
-    
         
-        load_checkpoint(self.backbone, pretrained, map_location='cpu', strict=False, logger='current')
-        self.decode_head.init_weights()
+        # Check backbone type to decide loading method
+        backbone_type = self.backbone.__class__.__name__
+        if backbone_type == 'MixVisionTransformer':
+            # Use weight converter for MiT backbone (handles old->new key format)
+            load_pretrained_mit(self.backbone, pretrained)
+        else:
+            # VMamba or other backbones - use standard checkpoint loading
+            load_checkpoint(self.backbone, pretrained, map_location='cpu', strict=False, logger='current')
+
         
     def forward(self, x):
         segout = self.backbone(x)
