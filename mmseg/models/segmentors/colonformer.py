@@ -149,8 +149,24 @@ class ColonFormer(nn.Module):
         if backbone_type == 'MixVisionTransformer':
             # Use weight converter for MiT backbone (handles old->new key format)
             load_pretrained_mit(self.backbone, pretrained)
+        elif backbone_type == 'Backbone_VSSM':
+            # VMamba pretrained weights are wrapped in 'model' key
+            import torch
+            checkpoint = torch.load(pretrained, map_location='cpu')
+            if 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            else:
+                state_dict = checkpoint
+            # Load with strict=False to allow partial loading
+            missing, unexpected = self.backbone.load_state_dict(state_dict, strict=False)
+            loaded = len(state_dict) - len(unexpected)
+            print(f'[VMamba] Successfully loaded {loaded}/{len(state_dict)} weights')
+            if missing:
+                print(f'[VMamba] Missing keys: {len(missing)}')
+            if unexpected:
+                print(f'[VMamba] Unexpected keys: {len(unexpected)}')
         else:
-            # VMamba or other backbones - use standard checkpoint loading
+            # Other backbones - use standard checkpoint loading
             load_checkpoint(self.backbone, pretrained, map_location='cpu', strict=False, logger='current')
 
         
