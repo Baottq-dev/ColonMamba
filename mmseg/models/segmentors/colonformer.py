@@ -16,29 +16,22 @@ from ..utils.weight_converter import load_pretrained_mit
 
 
 class SS2D_Wrapper(nn.Module):
-    """Wrapper for SS2D to match AA_kernel behavior.
-    
-    AA_kernel architecture:
-      1. conv0 (1x1): channel projection
-      2. conv1 (3x3): local context mixing  
-      3. Hattn + Wattn: axial attention with residuals
-      
-    This wrapper adds similar preprocessing + residual connection.
-    """
+
     def __init__(self, d_model, ss2d_module):
         super().__init__()
-        # Preprocessing convs like AA_kernel
+        # Preprocessing convs
         self.conv0 = Conv(d_model, d_model, kSize=1, stride=1, padding=0, bn_acti=True)
         self.conv1 = Conv(d_model, d_model, kSize=3, stride=1, padding=1, bn_acti=True)
         
         # SS2D for spatial attention
         self.ss2d = ss2d_module
         
-        # Learnable gamma, initialized to 0 (like AA_kernel's self.gamma)
-        self.gamma = nn.Parameter(torch.zeros(1))
+        # Learnable gamma, initialized to small value (NOT 0!)
+        # CRITICAL: gamma=0 blocks gradient flow to SS2D (d/d(ss2d) = 0)
+        self.gamma = nn.Parameter(torch.ones(1) * 0.1)
     
     def forward(self, x):
-        # Preprocessing (like AA_kernel's conv0 + conv1)
+        # Preprocessing convs
         out = self.conv0(x)
         out = self.conv1(out)
         
