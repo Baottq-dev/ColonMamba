@@ -16,21 +16,35 @@ from ..utils.weight_converter import load_pretrained_mit
 
 
 class SS2D_Wrapper(nn.Module):
-    """Wrapper for SS2D to match AA_kernel behavior with residual + gamma.
+    """Wrapper for SS2D to match AA_kernel behavior.
     
-    AA_kernel uses: out = gamma * attention_out + x (with gamma=0 init)
-    This stabilizes training by starting with pure residual connections.
+    AA_kernel architecture:
+      1. conv0 (1x1): channel projection
+      2. conv1 (3x3): local context mixing  
+      3. Hattn + Wattn: axial attention with residuals
+      
+    This wrapper adds similar preprocessing + residual connection.
     """
-    def __init__(self, ss2d_module):
+    def __init__(self, d_model, ss2d_module):
         super().__init__()
+        # Preprocessing convs like AA_kernel
+        self.conv0 = Conv(d_model, d_model, kSize=1, stride=1, padding=0, bn_acti=True)
+        self.conv1 = Conv(d_model, d_model, kSize=3, stride=1, padding=1, bn_acti=True)
+        
+        # SS2D for spatial attention
         self.ss2d = ss2d_module
+        
         # Learnable gamma, initialized to 0 (like AA_kernel's self.gamma)
         self.gamma = nn.Parameter(torch.zeros(1))
     
     def forward(self, x):
-        # SS2D output + residual connection with learnable gamma
-        ss2d_out = self.ss2d(x)
-        return self.gamma * ss2d_out + x
+        # Preprocessing (like AA_kernel's conv0 + conv1)
+        out = self.conv0(x)
+        out = self.conv1(out)
+        
+        # SS2D attention with residual + gamma
+        ss2d_out = self.ss2d(out)
+        return self.gamma * ss2d_out + out
 
 
 @MODELS.register_module()
@@ -112,8 +126,8 @@ class ColonFormer(nn.Module):
                     f"Original error: {e}"
                 )
             print("[ColonFormer] Using SS2D for spatial attention (VMamba-style)")
-            # Wrap SS2D with residual + gamma to match AA_kernel behavior
-            self.aa_kernel_1 = SS2D_Wrapper(SS2D(
+            # Wrap SS2D with conv preprocessing + residual to match AA_kernel
+            self.aa_kernel_1 = SS2D_Wrapper(self.c2, SS2D(
                 d_model=self.c2,
                 d_state=1,           
                 ssm_ratio=2.0,
@@ -122,7 +136,7 @@ class ColonFormer(nn.Module):
                 forward_type='v05_noz',  
                 channel_first=True
             ))
-            self.aa_kernel_2 = SS2D_Wrapper(SS2D(
+            self.aa_kernel_2 = SS2D_Wrapper(self.c3, SS2D(
                 d_model=self.c3,
                 d_state=1,
                 ssm_ratio=2.0,
@@ -131,7 +145,7 @@ class ColonFormer(nn.Module):
                 forward_type='v05_noz',
                 channel_first=True
             ))
-            self.aa_kernel_3 = SS2D_Wrapper(SS2D(
+            self.aa_kernel_3 = SS2D_Wrapper(self.c4, SS2D(
                 d_model=self.c4,
                 d_state=1,
                 ssm_ratio=2.0,
