@@ -15,6 +15,24 @@ from mmengine.runner import load_checkpoint
 from ..utils.weight_converter import load_pretrained_mit
 
 
+class SS2D_Wrapper(nn.Module):
+    """Wrapper for SS2D to match AA_kernel behavior with residual + gamma.
+    
+    AA_kernel uses: out = gamma * attention_out + x (with gamma=0 init)
+    This stabilizes training by starting with pure residual connections.
+    """
+    def __init__(self, ss2d_module):
+        super().__init__()
+        self.ss2d = ss2d_module
+        # Learnable gamma, initialized to 0 (like AA_kernel's self.gamma)
+        self.gamma = nn.Parameter(torch.zeros(1))
+    
+    def forward(self, x):
+        # SS2D output + residual connection with learnable gamma
+        ss2d_out = self.ss2d(x)
+        return self.gamma * ss2d_out + x
+
+
 @MODELS.register_module()
 class ColonFormer(nn.Module):
     """Encoder Decoder segmentors.
@@ -94,17 +112,17 @@ class ColonFormer(nn.Module):
                     f"Original error: {e}"
                 )
             print("[ColonFormer] Using SS2D for spatial attention (VMamba-style)")
-            # Use optimized config matching backbone (v05_noz is 2x faster than v2)
-            self.aa_kernel_1 = SS2D(
+            # Wrap SS2D with residual + gamma to match AA_kernel behavior
+            self.aa_kernel_1 = SS2D_Wrapper(SS2D(
                 d_model=self.c2,
-                d_state=1,           # Match backbone config
+                d_state=1,           
                 ssm_ratio=2.0,
                 dt_rank='auto',
                 d_conv=3,
-                forward_type='v05_noz',  # Optimized forward type
-                channel_first=True  # Critical for [B,C,H,W] format
-            )
-            self.aa_kernel_2 = SS2D(
+                forward_type='v05_noz',  
+                channel_first=True
+            ))
+            self.aa_kernel_2 = SS2D_Wrapper(SS2D(
                 d_model=self.c3,
                 d_state=1,
                 ssm_ratio=2.0,
@@ -112,8 +130,8 @@ class ColonFormer(nn.Module):
                 d_conv=3,
                 forward_type='v05_noz',
                 channel_first=True
-            )
-            self.aa_kernel_3 = SS2D(
+            ))
+            self.aa_kernel_3 = SS2D_Wrapper(SS2D(
                 d_model=self.c4,
                 d_state=1,
                 ssm_ratio=2.0,
@@ -121,7 +139,7 @@ class ColonFormer(nn.Module):
                 d_conv=3,
                 forward_type='v05_noz',
                 channel_first=True
-            )
+            ))
         else:
             # Use original Axial Attention
             print("[ColonFormer] Using Axial Attention for spatial attention (original)")
