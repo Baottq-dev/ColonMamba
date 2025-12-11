@@ -440,12 +440,9 @@ if __name__ == '__main__':
         # Train and get metrics
         loss, dice, iou = train(train_loader, model, optimizer, epoch, lr_scheduler, args)
         
+        
         # Get current learning rate
         current_lr = optimizer.param_groups[0]['lr']
-        
-        # Update best IoU
-        if iou > best_iou:
-            best_iou = iou
         
         # Log to CSV
         log_writer.writerow([
