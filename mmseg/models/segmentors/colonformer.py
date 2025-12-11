@@ -94,31 +94,32 @@ class ColonFormer(nn.Module):
                     f"Original error: {e}"
                 )
             print("[ColonFormer] Using SS2D for spatial attention (VMamba-style)")
+            # Use optimized config matching backbone (v05_noz is 2x faster than v2)
             self.aa_kernel_1 = SS2D(
                 d_model=self.c2,
-                d_state=16,
+                d_state=1,           # Match backbone config
                 ssm_ratio=2.0,
                 dt_rank='auto',
                 d_conv=3,
-                forward_type='v2',
+                forward_type='v05_noz',  # Optimized forward type
                 channel_first=True  # Critical for [B,C,H,W] format
             )
             self.aa_kernel_2 = SS2D(
                 d_model=self.c3,
-                d_state=16,
+                d_state=1,
                 ssm_ratio=2.0,
                 dt_rank='auto',
                 d_conv=3,
-                forward_type='v2',
+                forward_type='v05_noz',
                 channel_first=True
             )
             self.aa_kernel_3 = SS2D(
                 d_model=self.c4,
-                d_state=16,
+                d_state=1,
                 ssm_ratio=2.0,
                 dt_rank='auto',
                 d_conv=3,
-                forward_type='v2',
+                forward_type='v05_noz',
                 channel_first=True
             )
         else:

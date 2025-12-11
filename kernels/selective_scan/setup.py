@@ -162,7 +162,6 @@ setup(
     cmdclass={"bdist_wheel": _bdist_wheel, "build_ext": BuildExtension} if ext_modules else {"bdist_wheel": _bdist_wheel,},
     python_requires=">=3.7",
     install_requires=[
-        "torch",
         "packaging",
         "ninja",
         "einops",
