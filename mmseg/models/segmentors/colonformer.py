@@ -28,7 +28,7 @@ class SS2D_Wrapper(nn.Module):
         
         # Learnable gamma, initialized to small value (NOT 0!)
         # CRITICAL: gamma=0 blocks gradient flow to SS2D (d/d(ss2d) = 0)
-        self.gamma = nn.Parameter(torch.ones(1) * 0.1)
+        self.gamma = nn.Parameter(torch.ones(1) * 0.05)
     
     def forward(self, x):
         # Preprocessing convs
