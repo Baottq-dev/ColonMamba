@@ -11,7 +11,11 @@ from packaging import version
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from torch.cuda.amp import custom_bwd, custom_fwd
+from torch.amp import custom_fwd as _custom_fwd, custom_bwd as _custom_bwd
+
+# Wrapper decorators for new torch.amp API
+custom_fwd = lambda fn=None: _custom_fwd(fn, device_type='cuda') if fn is not None else lambda f: _custom_fwd(f, device_type='cuda')
+custom_bwd = lambda fn=None: _custom_bwd(fn, device_type='cuda') if fn is not None else lambda f: _custom_bwd(f, device_type='cuda')
 
 import triton
 import triton.language as tl
