@@ -11,6 +11,7 @@ import cv2
 from .lib.conv_layer import Conv, BNPReLU
 from .lib.axial_atten import AA_kernel
 from .lib.context_module import CFPModule
+from .lib.local_global_block import LocalGlobalBlock, build_local_global_block
 from mmengine.runner import load_checkpoint
 from ..utils.weight_converter import load_pretrained_mit
 
@@ -35,9 +36,8 @@ class SS2D_Wrapper(nn.Module):
         out = self.conv0(x)
         out = self.conv1(out)
         
-        # SS2D attention with residual + gamma
         ss2d_out = self.ss2d(out)
-        return self.gamma * ss2d_out + out
+        return self.gamma * ss2d_out
 
 
 @MODELS.register_module()
@@ -57,7 +57,8 @@ class ColonFormer(nn.Module):
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
-                 use_ss2d=False):
+                 attention_type='ss2d',
+                 use_local_global=False):
         super(ColonFormer, self).__init__()
         self.backbone = builder.build_backbone(backbone)
         if neck is not None:
@@ -107,9 +108,25 @@ class ColonFormer(nn.Module):
         self.ra3_conv2 = Conv(32, 32, 3, 1, padding=1, bn_acti=True)
         self.ra3_conv3 = Conv(32, 1, 3, 1, padding=1, bn_acti=True)
         
-        # Spatial Attention: Hybrid mode (AA_kernel or SS2D)
-        if use_ss2d:
-            # Use SS2D from VMamba for better spatial modeling
+        # Store config for reference
+        self.attention_type = attention_type
+        self.use_local_global = use_local_global
+        
+        # Spatial Attention: 3 modes available
+        # 1. LocalGlobalBlock (2-Branch Bottleneck) - IMPROVED
+        # 2. SS2D only (VMamba-style) - ORIGINAL
+        # 3. AA_kernel (Axial Attention) - ORIGINAL
+        
+        if use_local_global:
+            # ========== IMPROVED: 2-Branch Bottleneck ==========
+            # Uses LocalGlobalBlock with local DW-Conv + global attention
+            print(f"[ColonFormer] Using LocalGlobalBlock with {attention_type} (2-Branch Bottleneck)")
+            self.aa_kernel_1 = build_local_global_block(self.c2, attention_type, reduction=2)
+            self.aa_kernel_2 = build_local_global_block(self.c3, attention_type, reduction=2)
+            self.aa_kernel_3 = build_local_global_block(self.c4, attention_type, reduction=2)
+        
+        elif attention_type == 'ss2d':
+            # ========== ORIGINAL: SS2D Only ==========
             try:
                 from mmseg.models.backbones.vmamba import SS2D
             except ImportError as e:
@@ -119,36 +136,26 @@ class ColonFormer(nn.Module):
                     f"Original error: {e}"
                 )
             print("[ColonFormer] Using SS2D for spatial attention (VMamba-style)")
-            # Wrap SS2D with conv preprocessing + residual to match AA_kernel
             self.aa_kernel_1 = SS2D_Wrapper(self.c2, SS2D(
-                d_model=self.c2,
-                d_state=1,           
+                d_model=self.c2, 
+                d_state=1, 
                 ssm_ratio=2.0,
-                dt_rank='auto',
-                d_conv=3,
-                forward_type='v05_noz',  
+                dt_rank='auto', 
+                d_conv=3, 
+                forward_type='v05_noz', 
                 channel_first=True
             ))
             self.aa_kernel_2 = SS2D_Wrapper(self.c3, SS2D(
-                d_model=self.c3,
-                d_state=1,
-                ssm_ratio=2.0,
-                dt_rank='auto',
-                d_conv=3,
-                forward_type='v05_noz',
-                channel_first=True
+                d_model=self.c3, d_state=1, ssm_ratio=2.0,
+                dt_rank='auto', d_conv=3, forward_type='v05_noz', channel_first=True
             ))
             self.aa_kernel_3 = SS2D_Wrapper(self.c4, SS2D(
-                d_model=self.c4,
-                d_state=1,
-                ssm_ratio=2.0,
-                dt_rank='auto',
-                d_conv=3,
-                forward_type='v05_noz',
-                channel_first=True
+                d_model=self.c4, d_state=1, ssm_ratio=2.0,
+                dt_rank='auto', d_conv=3, forward_type='v05_noz', channel_first=True
             ))
+        
         else:
-            # Use original Axial Attention
+            # ========== ORIGINAL: AA_kernel ==========
             print("[ColonFormer] Using Axial Attention for spatial attention (original)")
             self.aa_kernel_1 = AA_kernel(self.c2, self.c2)
             self.aa_kernel_2 = AA_kernel(self.c3, self.c3)
