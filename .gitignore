@@ -38,6 +38,8 @@ TestDataset/
 snapshots/
 data/
 experiment/
+docs/
+results/
 
 # Cache and temporary files
 .cache/
@@ -54,3 +56,5 @@ work_dirs/
 mmseg/.mim/
 mmseg_new/
 mmseg_old/
+
+*.sh
