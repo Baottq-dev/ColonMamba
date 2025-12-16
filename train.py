@@ -286,6 +286,7 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
             # ---- data prepare ----
             images, gts = pack
             images = Variable(images).cuda()
+            images = images.to(memory_format=torch.channels_last)  
             gts = Variable(gts).cuda()
             # ---- rescale ----
             trainsize = int(round(args.init_trainsize*rate/32)*32)
@@ -350,8 +351,11 @@ if __name__ == '__main__':
                         default='') 
     parser.add_argument('--pretrained_path', type=str, help='path to pretrained backbone weights',
                         default='')  
-    parser.add_argument('--use_ss2d', action='store_true',
-                        help='Use SS2D instead of Axial Attention in decoder for better spatial modeling')
+    parser.add_argument('--attention_type', type=str, default='ss2d',
+                        choices=['aa_kernel', 'ss2d'],
+                        help='Type of spatial attention: aa_kernel or ss2d (default: ss2d)')
+    parser.add_argument('--use_local_global', action='store_true',
+                        help='Enable 2-Branch Bottleneck (Local DW-Conv + Global Attention)')
     args = parser.parse_args()
 
     logging.getLogger('mmengine').setLevel(logging.WARNING)
@@ -407,13 +411,15 @@ if __name__ == '__main__':
                 auxiliary_head=None,
                 train_cfg=dict(),
                 test_cfg=dict(mode='whole'),
-                use_ss2d=args.use_ss2d,  # NEW: Enable SS2D mode
+                attention_type=args.attention_type,  # Spatial attention type: 'aa_kernel' or 'ss2d'
+                use_local_global=args.use_local_global,  # Enable 2-Branch Bottleneck
                 pretrained=args.pretrained_path if args.pretrained_path else (
                     'pretrained/vssm_{}.pth'.format(args.backbone.replace('vmamba_', '')) 
                     if 'vmamba' in args.backbone 
                     else 'pretrained/mit_{}.pth'.format(args.backbone)
                 )).cuda()
-
+    
+    model = model.to(memory_format=torch.channels_last)
 
     
     # ---- flops and params ----
