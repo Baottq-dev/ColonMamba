@@ -1,5 +1,4 @@
 """
-VMamba Backbone for ColonFormer
 Adapted from official VMamba: https://github.com/MzeroMiko/VMamba
 """
 
