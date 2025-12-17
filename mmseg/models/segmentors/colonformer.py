@@ -202,6 +202,28 @@ class ColonFormer(nn.Module):
             # Other backbones - use standard checkpoint loading
             load_checkpoint(self.backbone, pretrained, map_location='cpu', strict=False, logger='current')
 
+    def freeze_backbone(self):
+        """Freeze all backbone parameters.
+        
+        Use this during early epochs to train only the decoder first,
+        then call unfreeze_backbone() to fine-tune the whole model.
+        """
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        self._backbone_frozen = True
+        print("[ColonFormer] Backbone FROZEN - training decoder only")
+        
+    def unfreeze_backbone(self):
+        """Unfreeze all backbone parameters for fine-tuning."""
+        for param in self.backbone.parameters():
+            param.requires_grad = True
+        self._backbone_frozen = False
+        print("[ColonFormer] Backbone UNFROZEN - training full model")
+        
+    def is_backbone_frozen(self):
+        """Check if backbone is currently frozen."""
+        return getattr(self, '_backbone_frozen', False)
+
         
     def forward(self, x):
         segout = self.backbone(x)

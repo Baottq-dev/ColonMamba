@@ -356,6 +356,8 @@ if __name__ == '__main__':
                         help='Type of spatial attention: aa_kernel or ss2d (default: ss2d)')
     parser.add_argument('--use_local_global', action='store_true',
                         help='Enable 2-Branch Bottleneck (Local DW-Conv + Global Attention)')
+    parser.add_argument('--freeze_epochs', type=int, default=0,
+                        help='Freeze backbone for first N epochs (default: 0 = no freeze)')
     args = parser.parse_args()
 
     logging.getLogger('mmengine').setLevel(logging.WARNING)
@@ -421,9 +423,17 @@ if __name__ == '__main__':
     
     model = model.to(memory_format=torch.channels_last)
 
+    # ========== FREEZE BACKBONE (if enabled) ==========
+    if args.freeze_epochs > 0:
+        model.freeze_backbone()
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"  Total params: {total_params:,}")
+        print(f"  Trainable params: {trainable_params:,} ({100*trainable_params/total_params:.1f}%)")
     
     # ---- flops and params ----
-    params = model.parameters()
+    # Only pass trainable parameters to optimizer
+    params = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = torch.optim.Adam(params, args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
                                         T_max=len(train_loader)*args.num_epochs,
@@ -443,6 +453,20 @@ if __name__ == '__main__':
     best_iou = 0.0
     
     for epoch in range(start_epoch, args.num_epochs+1):
+        # ========== UNFREEZE BACKBONE after N epochs ==========
+        if args.freeze_epochs > 0 and epoch == args.freeze_epochs + 1:
+            model.unfreeze_backbone()
+            # Recreate optimizer with ALL parameters (including backbone)
+            optimizer = torch.optim.Adam(model.parameters(), args.init_lr / 10)  # Lower LR for fine-tuning
+            # Recreate scheduler for remaining epochs
+            remaining_epochs = args.num_epochs - epoch + 1
+            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, 
+                T_max=len(train_loader) * remaining_epochs,
+                eta_min=args.init_lr / 1000
+            )
+            print(f"[Epoch {epoch}] Optimizer recreated with all params, LR={args.init_lr/10:.6f}")
+        
         # Train and get metrics
         loss, dice, iou = train(train_loader, model, optimizer, epoch, lr_scheduler, args)
         
