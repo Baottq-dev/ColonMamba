@@ -98,7 +98,7 @@ BACKBONE_CONFIGS = {
         drop_path_rate=0.2,
         patch_size=4,
         norm_layer='ln2d',
-        ssm_d_state=1,
+        ssm_d_state=8,
         ssm_ratio=2.0,
         ssm_conv=3,
         ssm_conv_bias=False,
@@ -115,7 +115,7 @@ BACKBONE_CONFIGS = {
         drop_path_rate=0.3,
         patch_size=4,
         norm_layer='ln2d',
-        ssm_d_state=1,
+        ssm_d_state=8,
         ssm_ratio=2.0,
         ssm_conv=3,
         ssm_conv_bias=False,
@@ -132,7 +132,7 @@ BACKBONE_CONFIGS = {
         drop_path_rate=0.6,
         patch_size=4,
         norm_layer='ln2d',
-        ssm_d_state=1,
+        ssm_d_state=8,
         ssm_ratio=2.0,
         ssm_conv=3,
         ssm_conv_bias=False,
@@ -338,15 +338,15 @@ if __name__ == '__main__':
     parser.add_argument('--init_lr', type=float,
                         default=1e-4, help='learning rate')
     parser.add_argument('--batchsize', type=int,
-                        default=8, help='training batch size')
+                        default=4, help='training batch size')
     parser.add_argument('--init_trainsize', type=int,
                         default=352, help='training dataset size')
     parser.add_argument('--clip', type=float,
                         default=0.5, help='gradient clipping margin')
     parser.add_argument('--train_path', type=str,
                         default='./data/TrainDataset', help='path to train dataset')
-    parser.add_argument('--train_save', type=str,
-                        default='ColonFormerB3')
+    parser.add_argument('--train_save', type=str, default='auto',
+                        help='Experiment name for saving (default: auto-generated from params)')
     parser.add_argument('--resume_path', type=str, help='path to checkpoint for resume training',
                         default='') 
     parser.add_argument('--pretrained_path', type=str, help='path to pretrained backbone weights',
@@ -358,7 +358,36 @@ if __name__ == '__main__':
                         help='Enable 2-Branch Bottleneck (Local DW-Conv + Global Attention)')
     parser.add_argument('--freeze_epochs', type=int, default=0,
                         help='Freeze backbone for first N epochs (default: 0 = no freeze)')
+    parser.add_argument('--weight_decay', type=float, default=0.01,
+                        help='Weight decay for AdamW optimizer (default: 0.01)')
+    parser.add_argument('--backbone_lr', type=float, default=None,
+                        help='Learning rate for backbone after unfreezing (default: init_lr/10)')
     args = parser.parse_args()
+    
+    # Set default backbone_lr if not provided
+    if args.backbone_lr is None:
+        args.backbone_lr = args.init_lr / 10
+
+    # Auto-generate experiment name if not provided
+    if args.train_save == 'auto':
+        # Format: {backbone}_{attention}[_lg][_freeze{N}]_ep{epochs}
+        name_parts = [args.backbone]
+        
+        # Attention type
+        if args.use_local_global:
+            name_parts.append(f'lg_{args.attention_type}')  # lg = local_global
+        else:
+            name_parts.append(args.attention_type)
+        
+        # Freeze epochs (if used)
+        if args.freeze_epochs > 0:
+            name_parts.append(f'freeze{args.freeze_epochs}')
+        
+        # Number of epochs
+        name_parts.append(f'ep{args.num_epochs}')
+        
+        args.train_save = '_'.join(name_parts)
+        print(f"[Auto] Experiment name: {args.train_save}")
 
     logging.getLogger('mmengine').setLevel(logging.WARNING)
 
@@ -434,7 +463,7 @@ if __name__ == '__main__':
     # ---- flops and params ----
     # Only pass trainable parameters to optimizer
     params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = torch.optim.Adam(params, args.init_lr)
+    optimizer = torch.optim.AdamW(params, lr=args.init_lr, weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
                                         T_max=len(train_loader)*args.num_epochs,
                                         eta_min=args.init_lr/1000)
@@ -457,7 +486,7 @@ if __name__ == '__main__':
         if args.freeze_epochs > 0 and epoch == args.freeze_epochs + 1:
             model.unfreeze_backbone()
             # Recreate optimizer with ALL parameters (including backbone)
-            optimizer = torch.optim.Adam(model.parameters(), args.init_lr / 10)  # Lower LR for fine-tuning
+            optimizer = torch.optim.AdamW(model.parameters(), lr=args.backbone_lr, weight_decay=args.weight_decay)  # Lower LR for fine-tuning
             # Recreate scheduler for remaining epochs
             remaining_epochs = args.num_epochs - epoch + 1
             lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -465,7 +494,7 @@ if __name__ == '__main__':
                 T_max=len(train_loader) * remaining_epochs,
                 eta_min=args.init_lr / 1000
             )
-            print(f"[Epoch {epoch}] Optimizer recreated with all params, LR={args.init_lr/10:.6f}")
+            print(f"[Epoch {epoch}] Backbone unfrozen, LR={args.backbone_lr:.6f}")
         
         # Train and get metrics
         loss, dice, iou = train(train_loader, model, optimizer, epoch, lr_scheduler, args)

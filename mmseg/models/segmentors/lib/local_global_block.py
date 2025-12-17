@@ -183,7 +183,7 @@ def build_local_global_block(channels, attention_type='ss2d', reduction=2):
     if attention_type == 'ss2d':
         global_module = build_ss2d_module(
             channels=hidden,
-            d_state=1,
+            d_state=8,
             ssm_ratio=2.0,
             d_conv=3,
             forward_type='v05_noz',

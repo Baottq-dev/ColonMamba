@@ -295,8 +295,8 @@ if __name__ == '__main__':
                         help='Path to model checkpoint (required)')
     parser.add_argument('--test_path', type=str,
                         default='./data/TestDataset', help='Path to test dataset')
-    parser.add_argument('--output_dir', type=str,
-                        default='./results', help='Directory to save results (CSV and masks)')
+    parser.add_argument('--output_dir', type=str, default='auto',
+                        help='Directory to save results (default: auto-generated from params)')
     parser.add_argument('--save_masks', action='store_true',
                         help='Save predicted masks to output directory')
     parser.add_argument('--attention_type', type=str, default='ss2d',
@@ -305,6 +305,19 @@ if __name__ == '__main__':
     parser.add_argument('--use_local_global', action='store_true',
                         help='Enable 2-Branch Bottleneck (Local DW-Conv + Global Attention)')
     args = parser.parse_args()
+
+    # Auto-generate output_dir if not provided
+    if args.output_dir == 'auto':
+        # Format: results/{backbone}_{attention}[_lg]
+        name_parts = [args.backbone]
+        
+        if args.use_local_global:
+            name_parts.append(f'lg_{args.attention_type}')
+        else:
+            name_parts.append(args.attention_type)
+        
+        args.output_dir = os.path.join('results', '_'.join(name_parts))
+        print(f"[Auto] Output dir: {args.output_dir}")
 
     backbone_cfg, in_channels = get_backbone_cfg(args.backbone)
     

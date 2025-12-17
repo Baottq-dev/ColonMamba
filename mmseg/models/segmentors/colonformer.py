@@ -37,7 +37,7 @@ class SS2D_Wrapper(nn.Module):
         out = self.conv1(out)
         
         ss2d_out = self.ss2d(out)
-        return self.gamma * ss2d_out
+        return self.gamma * ss2d_out + out
 
 
 @MODELS.register_module()
@@ -138,7 +138,7 @@ class ColonFormer(nn.Module):
             print("[ColonFormer] Using SS2D for spatial attention (VMamba-style)")
             self.aa_kernel_1 = SS2D_Wrapper(self.c2, SS2D(
                 d_model=self.c2, 
-                d_state=1, 
+                d_state=8, 
                 ssm_ratio=2.0,
                 dt_rank='auto', 
                 d_conv=3, 
@@ -146,12 +146,22 @@ class ColonFormer(nn.Module):
                 channel_first=True
             ))
             self.aa_kernel_2 = SS2D_Wrapper(self.c3, SS2D(
-                d_model=self.c3, d_state=1, ssm_ratio=2.0,
-                dt_rank='auto', d_conv=3, forward_type='v05_noz', channel_first=True
+                d_model=self.c3, 
+                d_state=8, 
+                ssm_ratio=2.0,
+                dt_rank='auto', 
+                d_conv=3, 
+                forward_type='v05_noz', 
+                channel_first=True
             ))
             self.aa_kernel_3 = SS2D_Wrapper(self.c4, SS2D(
-                d_model=self.c4, d_state=1, ssm_ratio=2.0,
-                dt_rank='auto', d_conv=3, forward_type='v05_noz', channel_first=True
+                d_model=self.c4, 
+                d_state=8, 
+                ssm_ratio=2.0,
+                dt_rank='auto', 
+                d_conv=3, 
+                forward_type='v05_noz', 
+                channel_first=True
             ))
         
         else:
