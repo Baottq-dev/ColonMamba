@@ -103,8 +103,10 @@ def get_scores(gts, prs):
 def get_config_name(args):
     """Generate config name based on arguments"""
     parts = [args.backbone]
-    if args.use_ss2d:
+    if args.attention_type == 'ss2d':
         parts.append("ss2d")
+    if args.use_local_global:
+        parts.append("local_global")
     return "_".join(parts)
 
 
@@ -121,12 +123,13 @@ def save_metrics_to_csv(metrics, args, output_dir):
     with open(csv_path, 'a', newline='') as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(['timestamp', 'backbone', 'use_ss2d', 'weight', 'test_path', 
+            writer.writerow(['timestamp', 'backbone', 'attention_type', 'use_local_global', 'weight', 'test_path', 
                            'dice', 'iou', 'precision', 'recall'])
         writer.writerow([
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             args.backbone,
-            args.use_ss2d,
+            args.attention_type,
+            args.use_local_global,
             args.weight,
             args.test_path,
             f'{mean_dice:.4f}',
@@ -252,14 +255,15 @@ def inference(model, args):
     with open(csv_path, 'a', newline='') as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(['timestamp', 'backbone', 'use_ss2d', 'weight', 'dataset', 
+            writer.writerow(['timestamp', 'backbone', 'attention_type', 'use_local_global', 'weight', 'dataset', 
                            'num_images', 'dice', 'iou', 'precision', 'recall'])
         for result in all_results:
             mean_iou, mean_dice, mean_precision, mean_recall = result['metrics']
             writer.writerow([
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 args.backbone,
-                args.use_ss2d,
+                args.attention_type,
+                args.use_local_global,
                 args.weight,
                 result['dataset'],
                 result['num_images'],
@@ -295,8 +299,11 @@ if __name__ == '__main__':
                         default='./results', help='Directory to save results (CSV and masks)')
     parser.add_argument('--save_masks', action='store_true',
                         help='Save predicted masks to output directory')
-    parser.add_argument('--use_ss2d', action='store_true',
-                        help='Use SS2D instead of Axial Attention in decoder')
+    parser.add_argument('--attention_type', type=str, default='ss2d',
+                        choices=['aa_kernel', 'ss2d'],
+                        help='Type of spatial attention: aa_kernel or ss2d (default: ss2d)')
+    parser.add_argument('--use_local_global', action='store_true',
+                        help='Enable 2-Branch Bottleneck (Local DW-Conv + Global Attention)')
     args = parser.parse_args()
 
     backbone_cfg, in_channels = get_backbone_cfg(args.backbone)
@@ -323,7 +330,8 @@ if __name__ == '__main__':
                 auxiliary_head=None,
                 train_cfg=dict(),
                 test_cfg=dict(mode='whole'),
-                use_ss2d=args.use_ss2d,
+                attention_type=args.attention_type,
+                use_local_global=args.use_local_global,
                 pretrained=pretrained_path).cuda()
 
     # Load checkpoint (overwrites pretrained backbone weights)
