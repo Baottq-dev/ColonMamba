@@ -143,7 +143,7 @@ class ColonFormer(nn.Module):
                 ssm_ratio=2.0,
                 dt_rank='auto', 
                 d_conv=3, 
-                forward_type='v05_noz', 
+                forward_type='v05', 
                 channel_first=True
             ))
             self.aa_kernel_2 = SS2D_Wrapper(self.c3, SS2D(
@@ -152,7 +152,7 @@ class ColonFormer(nn.Module):
                 ssm_ratio=2.0,
                 dt_rank='auto', 
                 d_conv=3, 
-                forward_type='v05_noz', 
+                forward_type='v05', 
                 channel_first=True
             ))
             self.aa_kernel_3 = SS2D_Wrapper(self.c4, SS2D(
@@ -161,7 +161,7 @@ class ColonFormer(nn.Module):
                 ssm_ratio=2.0,
                 dt_rank='auto', 
                 d_conv=3, 
-                forward_type='v05_noz', 
+                forward_type='v05', 
                 channel_first=True
             ))
         
