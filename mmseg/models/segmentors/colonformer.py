@@ -120,10 +120,11 @@ class ColonFormer(nn.Module):
         if use_local_global:
             # ========== IMPROVED: 2-Branch Bottleneck ==========
             # Uses LocalGlobalBlock with local DW-Conv + global attention
+            # reduction=1: No channel reduction, preserve all information
             print(f"[ColonFormer] Using LocalGlobalBlock with {attention_type} (2-Branch Bottleneck)")
-            self.aa_kernel_1 = build_local_global_block(self.c2, attention_type, reduction=2)
-            self.aa_kernel_2 = build_local_global_block(self.c3, attention_type, reduction=2)
-            self.aa_kernel_3 = build_local_global_block(self.c4, attention_type, reduction=2)
+            self.aa_kernel_1 = build_local_global_block(self.c2, attention_type, reduction=1)
+            self.aa_kernel_2 = build_local_global_block(self.c3, attention_type, reduction=1)
+            self.aa_kernel_3 = build_local_global_block(self.c4, attention_type, reduction=1)
         
         elif attention_type == 'ss2d':
             # ========== ORIGINAL: SS2D Only ==========
