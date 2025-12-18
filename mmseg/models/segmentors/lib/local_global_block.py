@@ -57,14 +57,17 @@ class LocalGlobalBlock(nn.Module):
             nn.ReLU(inplace=True)
         )
         
-        # ========== Local Branch: Depthwise Conv 3×3 ==========
-        # Captures local features (edges, textures) without channel mixing
-        self.local_branch = nn.Sequential(
-            nn.Conv2d(self.hidden, self.hidden, kernel_size=3, padding=1, 
-                      groups=self.hidden, bias=False),  # Depthwise separable
-            nn.BatchNorm2d(self.hidden),
-            nn.ReLU(inplace=True)
-        )
+        # ========== Local Branch: Multi-Scale Dilated Depthwise Conv ==========
+        # Captures local features at multiple scales with larger receptive field
+        # Uses dilated convolutions (d=1, 2, 4) for multi-scale local features
+        self.local_dw_d1 = nn.Conv2d(self.hidden, self.hidden, kernel_size=3, 
+                                      padding=1, dilation=1, groups=self.hidden, bias=False)
+        self.local_dw_d2 = nn.Conv2d(self.hidden, self.hidden, kernel_size=3,
+                                      padding=2, dilation=2, groups=self.hidden, bias=False)
+        self.local_dw_d4 = nn.Conv2d(self.hidden, self.hidden, kernel_size=3,
+                                      padding=4, dilation=4, groups=self.hidden, bias=False)
+        self.local_bn = nn.BatchNorm2d(self.hidden)
+        self.local_act = nn.ReLU(inplace=True)
         
         # ========== Global Branch: SS2D or AA_kernel ==========
         # Captures global context and long-range dependencies
@@ -74,9 +77,13 @@ class LocalGlobalBlock(nn.Module):
             # Fallback: identity (should not happen in normal use)
             self.global_branch = nn.Identity()
         
+        # ========== Learnable Fusion Weights ==========
+        # Alpha controls the balance between local and global features
+        # Initialized to 0.5 for equal contribution
+        self.alpha = nn.Parameter(torch.ones(1) * 0.5)
+        
         # ========== Fusion Normalization ==========
         # Re-normalize after fusing BN (local) and LN (global) outputs
-        # This reconciles different normalization statistics
         self.fusion_norm = nn.BatchNorm2d(self.hidden)
         
         # ========== Bottleneck Exit ==========
@@ -84,12 +91,14 @@ class LocalGlobalBlock(nn.Module):
         self.expand = nn.Sequential(
             nn.Conv2d(self.hidden, channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True)  # Added activation for non-linearity
         )
         
         # ========== Learnable Residual Weight ==========
-        # Initialized to moderate value for effective contribution
-        # gamma=0.5 allows LocalGlobalBlock to have significant impact
-        self.gamma = nn.Parameter(torch.ones(1) * 0.5)
+        # gamma=0 at init (Zero Initialization)
+        # This prevents adding random noise to main path at training start
+        # Model learns to increase gamma as it learns useful features
+        self.gamma = nn.Parameter(torch.zeros(1))
     
     def forward(self, x):
         """
@@ -104,28 +113,35 @@ class LocalGlobalBlock(nn.Module):
         # ========== Compress: C → C/r ==========
         out = self.compress(x)
         
-        # ========== Parallel Branches in Bottleneck Space ==========
-        local_out = self.local_branch(out)     # Local features
-        global_out = self.global_branch(out)   # Global context
+        # ========== Local Branch: Multi-Scale Dilated DW-Conv with Skip ==========
+        # Apply dilated convolutions at multiple scales and sum
+        local_d1 = self.local_dw_d1(out)   # dilation=1, receptive field 3x3
+        local_d2 = self.local_dw_d2(out)   # dilation=2, receptive field 5x5
+        local_d4 = self.local_dw_d4(out)   # dilation=4, receptive field 9x9
+        local_out = local_d1 + local_d2 + local_d4
+        local_out = self.local_bn(local_out)
+        local_out = self.local_act(local_out)
+        local_out = local_out + out  # Skip connection: preserve original features
         
-        # ========== Fusion: Element-wise Addition ==========
-        # Local and global features are combined in reduced space
-        out = local_out + global_out
+        # ========== Global Branch ==========
+        global_out = self.global_branch(out)   # SS2D or AA_kernel
+        
+        # ========== Learnable Weighted Fusion ==========
+        # alpha controls balance: alpha*local + (1-alpha)*global
+        out = self.alpha * local_out + (1 - self.alpha) * global_out
         
         # ========== Fusion Normalization ==========
-        # Re-normalize to reconcile BN (local) and LN (global) statistics
         out = self.fusion_norm(out)
         
         # ========== Expand: C/r → C ==========
         out = self.expand(out)
         
-        # ========== Return processed output (no residual) ==========
-        # gamma scales the contribution, residual is added in colonformer.py
+        # ========== Return processed output ==========
         return self.gamma * out
 
 
 def build_ss2d_module(channels, d_state=1, ssm_ratio=2.0, d_conv=3, 
-                      forward_type='v05_noz', channel_first=True):
+                      forward_type='v05', channel_first=True):
     """
     Build SS2D module for global branch.
     
