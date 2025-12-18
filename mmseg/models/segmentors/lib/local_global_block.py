@@ -74,6 +74,11 @@ class LocalGlobalBlock(nn.Module):
             # Fallback: identity (should not happen in normal use)
             self.global_branch = nn.Identity()
         
+        # ========== Fusion Normalization ==========
+        # Re-normalize after fusing BN (local) and LN (global) outputs
+        # This reconciles different normalization statistics
+        self.fusion_norm = nn.BatchNorm2d(self.hidden)
+        
         # ========== Bottleneck Exit ==========
         # Conv 1×1 to expand channels back and fuse features
         self.expand = nn.Sequential(
@@ -82,9 +87,9 @@ class LocalGlobalBlock(nn.Module):
         )
         
         # ========== Learnable Residual Weight ==========
-        # Initialized to small value for stable training start
-        # As training progresses, model learns optimal weight
-        self.gamma = nn.Parameter(torch.ones(1) * 0.05)
+        # Initialized to moderate value for effective contribution
+        # gamma=0.5 allows LocalGlobalBlock to have significant impact
+        self.gamma = nn.Parameter(torch.ones(1) * 0.5)
     
     def forward(self, x):
         """
@@ -106,6 +111,10 @@ class LocalGlobalBlock(nn.Module):
         # ========== Fusion: Element-wise Addition ==========
         # Local and global features are combined in reduced space
         out = local_out + global_out
+        
+        # ========== Fusion Normalization ==========
+        # Re-normalize to reconcile BN (local) and LN (global) statistics
+        out = self.fusion_norm(out)
         
         # ========== Expand: C/r → C ==========
         out = self.expand(out)
@@ -183,7 +192,7 @@ def build_local_global_block(channels, attention_type='ss2d', reduction=2):
     if attention_type == 'ss2d':
         global_module = build_ss2d_module(
             channels=hidden,
-            d_state=8,
+            d_state=8,  
             ssm_ratio=2.0,
             d_conv=3,
             forward_type='v05_noz',
