@@ -95,10 +95,7 @@ class LocalGlobalBlock(nn.Module):
         )
         
         # ========== Learnable Residual Weight ==========
-        # gamma=0 at init (Zero Initialization)
-        # This prevents adding random noise to main path at training start
-        # Model learns to increase gamma as it learns useful features
-        self.gamma = nn.Parameter(torch.zeros(1))
+        self.gamma = nn.Parameter(torch.ones(1))
     
     def forward(self, x):
         """
@@ -208,7 +205,7 @@ def build_local_global_block(channels, attention_type='ss2d', reduction=2):
     if attention_type == 'ss2d':
         global_module = build_ss2d_module(
             channels=hidden,
-            d_state=8,  
+            d_state=16,  
             ssm_ratio=2.0,
             d_conv=3,
             forward_type='v05_noz',
