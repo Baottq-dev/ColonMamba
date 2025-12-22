@@ -26,10 +26,8 @@ class SS2D_Wrapper(nn.Module):
         
         # SS2D for spatial attention
         self.ss2d = ss2d_module
-        
-        # Learnable gamma, initialized to small value (NOT 0!)
-        # CRITICAL: gamma=0 blocks gradient flow to SS2D (d/d(ss2d) = 0)
-        self.gamma = nn.Parameter(torch.ones(1) * 0.05)
+
+        self.gamma = nn.Parameter(torch.ones(1))
     
     def forward(self, x):
         # Preprocessing convs
