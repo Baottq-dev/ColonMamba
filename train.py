@@ -17,6 +17,9 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
 
 from utils import clip_gradient, AvgMeter
 from torch.autograd import Variable
@@ -32,6 +35,54 @@ from mmseg.models.segmentors import ColonFormer as UNet
 import logging
 import warnings
 warnings.filterwarnings('ignore')
+
+
+# ===================== DISTRIBUTED UTILS =====================
+
+def setup_distributed():
+    """Initialize distributed training environment.
+    
+    Returns:
+        tuple: (rank, world_size, local_rank)
+    """
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ['LOCAL_RANK'])
+        
+        dist.init_process_group(
+            backend='nccl',
+            init_method='env://',
+            world_size=world_size,
+            rank=rank
+        )
+        torch.cuda.set_device(local_rank)
+        dist.barrier()
+        
+        return rank, world_size, local_rank
+    else:
+        # Single GPU fallback
+        return 0, 1, 0
+
+
+def cleanup_distributed():
+    """Clean up distributed training."""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def is_main_process():
+    """Check if this is the main process (rank 0)."""
+    if dist.is_initialized():
+        return dist.get_rank() == 0
+    return True
+
+
+def print_rank0(msg):
+    """Print only on rank 0."""
+    if is_main_process():
+        print(msg)
+
 
 # Cấu hình backbone kiểu cũ nhưng theo API mới
 BACKBONE_CONFIGS = {
@@ -262,20 +313,26 @@ def structure_loss(pred, mask):
     return (wfocal + wiou).mean()
 
 
-def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
+def train(train_loader, model, optimizer, epoch, lr_scheduler, args, local_rank=0):
     model.train()
     # ---- multi-scale training ----
     size_rates = [0.75, 1, 1.25]
     loss_record = AvgMeter()
     dice, iou = AvgMeter(), AvgMeter()
-    # with torch.autograd.set_detect_anomaly(True):
-    progress_bar = tqdm(
-        train_loader,
-        total=total_step,
-        desc=f"Epoch {epoch}/{args.num_epochs}",
-        leave=False
-    )
-    for i, pack in enumerate(progress_bar, start=1):
+    
+    # Progress bar only on rank 0
+    if is_main_process():
+        progress_bar = tqdm(
+            train_loader,
+            total=total_step,
+            desc=f"Epoch {epoch}/{args.num_epochs}",
+            leave=False
+        )
+        iterator = enumerate(progress_bar, start=1)
+    else:
+        iterator = enumerate(train_loader, start=1)
+    
+    for i, pack in iterator:
         if epoch <= 1:
                 optimizer.param_groups[0]["lr"] = (epoch * i) / (1.0 * total_step) * args.init_lr
         else:
@@ -285,25 +342,27 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
             optimizer.zero_grad()
             # ---- data prepare ----
             images, gts = pack
-            images = Variable(images).cuda()
+            images = images.cuda(local_rank, non_blocking=True)
             images = images.to(memory_format=torch.channels_last)  
-            gts = Variable(gts).cuda()
+            gts = gts.cuda(local_rank, non_blocking=True)
             # ---- rescale ----
             trainsize = int(round(args.init_trainsize*rate/32)*32)
-            images = F.interpolate (images, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-            gts = F.interpolate (gts, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            images = F.interpolate(images, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            gts = F.interpolate(gts, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
             # ---- forward ----
             map4, map3, map2, map1 = model(images)
-            map1 = F.interpolate (map1, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-            map2 = F.interpolate (map2, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-            map3 = F.interpolate (map3, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-            map4 = F.interpolate (map4, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            map1 = F.interpolate(map1, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            map2 = F.interpolate(map2, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            map3 = F.interpolate(map3, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+            map4 = F.interpolate(map4, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
             loss = structure_loss(map1, gts) + structure_loss(map2, gts) + structure_loss(map3, gts) + structure_loss(map4, gts)
-            # with torch.autograd.set_detect_anomaly(True):
-            #loss = nn.functional.binary_cross_entropy(map1, gts)
-            # ---- metrics ----
-            dice_score = dice_m(map4, gts)
-            iou_score = iou_m(map4, gts)
+            
+            # ---- metrics (on sigmoid output) ----
+            with torch.no_grad():
+                pred_sigmoid = torch.sigmoid(map4)
+                dice_score = dice_m(pred_sigmoid, gts)
+                iou_score = iou_m(pred_sigmoid, gts)
+            
             # ---- backward ----
             loss.backward()
             clip_gradient(optimizer, args.clip)
@@ -313,17 +372,18 @@ def train(train_loader, model, optimizer, epoch, lr_scheduler, args):
                 loss_record.update(loss.data, args.batchsize)
                 dice.update(dice_score.data, args.batchsize)
                 iou.update(iou_score.data, args.batchsize)
-                progress_bar.set_postfix({
-                    "loss": float(loss_record.val),
-                    "dice": float(dice.val),
-                    "iou": float(iou.val)
-                })
+                if is_main_process():
+                    progress_bar.set_postfix({
+                        "loss": float(loss_record.val),
+                        "dice": float(dice.val),
+                        "iou": float(iou.val)
+                    })
 
         # ---- train visualization ----
         if i == total_step:
-            print('{} Training Epoch [{:03d}/{:03d}], '
+            print_rank0('{} Training Epoch [{:03d}/{:03d}], '
                     '[loss: {:0.4f}, dice: {:0.4f}, iou: {:0.4f}]'.
-                    format(datetime.now(), epoch, args.num_epochs,\
+                    format(datetime.now(), epoch, args.num_epochs,
                             loss_record.show(), dice.show(), iou.show()))
     
     # Return metrics for best model tracking
@@ -362,7 +422,24 @@ if __name__ == '__main__':
                         help='Weight decay for AdamW optimizer (default: 0.01)')
     parser.add_argument('--backbone_lr', type=float, default=None,
                         help='Learning rate for backbone after unfreezing (default: init_lr/10)')
+    # DDP-specific arguments
+    parser.add_argument('--use_syncbn', action='store_true',
+                        help='Enable SyncBatchNorm for multi-GPU training')
+    parser.add_argument('--local_rank', type=int, default=0,
+                        help='Local rank for distributed training (auto-set by torchrun)')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed for reproducibility')
     args = parser.parse_args()
+    
+    # ========== DISTRIBUTED SETUP ==========
+    rank, world_size, local_rank = setup_distributed()
+    
+    # Set random seed for reproducibility
+    torch.manual_seed(args.seed + rank)
+    np.random.seed(args.seed + rank)
+    random.seed(args.seed + rank)
+    
+    print_rank0(f"[DDP] World size: {world_size}, Using SyncBN: {args.use_syncbn}")
     
     # Set default backbone_lr if not provided
     if args.backbone_lr is None:
@@ -387,24 +464,32 @@ if __name__ == '__main__':
         name_parts.append(f'ep{args.num_epochs}')
         
         args.train_save = '_'.join(name_parts)
-        print(f"[Auto] Experiment name: {args.train_save}")
+        print_rank0(f"[Auto] Experiment name: {args.train_save}")
 
     logging.getLogger('mmengine').setLevel(logging.WARNING)
 
     save_path = 'snapshots/{}/'.format(args.train_save)
-    if not os.path.exists(save_path):
-        os.makedirs(save_path, exist_ok=True)
-    else:
-        print("Save path existed")
+    if is_main_process():
+        if not os.path.exists(save_path):
+            os.makedirs(save_path, exist_ok=True)
+        else:
+            print("Save path existed")
+    
+    # Synchronize after directory creation
+    if world_size > 1:
+        dist.barrier()
 
-    # Setup training log CSV
+    # Setup training log CSV (rank 0 only)
     log_path = os.path.join(save_path, 'training_log.csv')
-    log_exists = os.path.exists(log_path)
-    log_file = open(log_path, 'a', newline='')
-    log_writer = csv.writer(log_file)
-    if not log_exists:
-        log_writer.writerow(['epoch', 'loss', 'dice', 'iou', 'lr', 'best_iou', 'timestamp'])
-        log_file.flush()
+    log_file = None
+    log_writer = None
+    if is_main_process():
+        log_exists = os.path.exists(log_path)
+        log_file = open(log_path, 'a', newline='')
+        log_writer = csv.writer(log_file)
+        if not log_exists:
+            log_writer.writerow(['epoch', 'loss', 'dice', 'iou', 'lr', 'best_iou', 'timestamp'])
+            log_file.flush()
 
     train_img_paths = []
     train_mask_paths = []
@@ -414,10 +499,27 @@ if __name__ == '__main__':
     train_mask_paths.sort()
 
     train_dataset = Dataset(train_img_paths, train_mask_paths)
+    
+    # Use DistributedSampler for multi-GPU
+    if world_size > 1:
+        train_sampler = DistributedSampler(
+            train_dataset, 
+            num_replicas=world_size, 
+            rank=rank, 
+            shuffle=True,
+            drop_last=True
+        )
+        shuffle = False
+    else:
+        train_sampler = None
+        shuffle = True
+    
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batchsize,
-        shuffle=True,
+        shuffle=shuffle,
+        sampler=train_sampler,
+        num_workers=4,
         pin_memory=True,
         drop_last=True
     )
@@ -448,17 +550,38 @@ if __name__ == '__main__':
                     'pretrained/vssm_{}.pth'.format(args.backbone.replace('vmamba_', '')) 
                     if 'vmamba' in args.backbone 
                     else 'pretrained/mit_{}.pth'.format(args.backbone)
-                )).cuda()
+                ))
     
+    # ========== SYNCBN (before DDP wrap) ==========
+    if args.use_syncbn and world_size > 1:
+        print_rank0("[SyncBN] Converting BatchNorm to SyncBatchNorm...")
+        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    
+    # Move to specific GPU
+    model = model.cuda(local_rank)
     model = model.to(memory_format=torch.channels_last)
+    
+    # ========== DDP WRAP ==========
+    if world_size > 1:
+        model = DDP(
+            model, 
+            device_ids=[local_rank], 
+            output_device=local_rank,
+            find_unused_parameters=True  # Needed for complex architectures
+        )
+        print_rank0("[DDP] Model wrapped with DistributedDataParallel")
+    
+    # Get the actual model (unwrap DDP if needed)
+    model_without_ddp = model.module if world_size > 1 else model
 
     # ========== FREEZE BACKBONE (if enabled) ==========
     if args.freeze_epochs > 0:
-        model.freeze_backbone()
-        total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"  Total params: {total_params:,}")
-        print(f"  Trainable params: {trainable_params:,} ({100*trainable_params/total_params:.1f}%)")
+        model_without_ddp.freeze_backbone()
+        if is_main_process():
+            total_params = sum(p.numel() for p in model.parameters())
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print(f"  Total params: {total_params:,}")
+            print(f"  Trainable params: {trainable_params:,} ({100*trainable_params/total_params:.1f}%)")
     
     # ---- flops and params ----
     # Only pass trainable parameters to optimizer
@@ -469,24 +592,29 @@ if __name__ == '__main__':
                                         eta_min=args.init_lr/1000)
 
     start_epoch = 1
-    if args.resume_path != '':
-        checkpoint = torch.load(args.resume_path)
-        start_epoch = checkpoint['epoch']
-        model.load_state_dict(checkpoint['state_dict'])
-        lr_scheduler.load_state_dict(checkpoint['scheduler'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-
-    print("#"*20, "Start Training", "#"*20)
-    
-    # Track best IoU for saving best model
     best_iou = 0.0
     
+    if args.resume_path != '':
+        checkpoint = torch.load(args.resume_path, map_location=f'cuda:{local_rank}')
+        start_epoch = checkpoint['epoch']
+        best_iou = checkpoint.get('best_iou', 0.0)
+        model_without_ddp.load_state_dict(checkpoint['state_dict'])
+        lr_scheduler.load_state_dict(checkpoint['scheduler'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        print_rank0(f"[Resume] Loaded checkpoint from epoch {start_epoch-1}, best_iou={best_iou:.4f}")
+
+    print_rank0("#"*20 + " Start Training " + "#"*20)
+    
     for epoch in range(start_epoch, args.num_epochs+1):
+        # Set epoch for DistributedSampler (important for shuffling!)
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+        
         # ========== UNFREEZE BACKBONE after N epochs ==========
         if args.freeze_epochs > 0 and epoch == args.freeze_epochs + 1:
-            model.unfreeze_backbone()
+            model_without_ddp.unfreeze_backbone()
             # Recreate optimizer with ALL parameters (including backbone)
-            optimizer = torch.optim.AdamW(model.parameters(), lr=args.backbone_lr, weight_decay=args.weight_decay)  # Lower LR for fine-tuning
+            optimizer = torch.optim.AdamW(model.parameters(), lr=args.backbone_lr, weight_decay=args.weight_decay)
             # Recreate scheduler for remaining epochs
             remaining_epochs = args.num_epochs - epoch + 1
             lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -494,52 +622,64 @@ if __name__ == '__main__':
                 T_max=len(train_loader) * remaining_epochs,
                 eta_min=args.init_lr / 1000
             )
-            print(f"[Epoch {epoch}] Backbone unfrozen, LR={args.backbone_lr:.6f}")
+            print_rank0(f"[Epoch {epoch}] Backbone unfrozen, LR={args.backbone_lr:.6f}")
         
         # Train and get metrics
-        loss, dice, iou = train(train_loader, model, optimizer, epoch, lr_scheduler, args)
+        loss, dice, iou = train(train_loader, model, optimizer, epoch, lr_scheduler, args, local_rank)
         
-        
-        # Get current learning rate
-        current_lr = optimizer.param_groups[0]['lr']
-        
-        # Log to CSV
-        log_writer.writerow([
-            epoch,
-            f'{loss:.4f}',
-            f'{dice:.4f}',
-            f'{iou:.4f}',
-            f'{current_lr:.6f}',
-            f'{best_iou:.4f}',
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ])
-        log_file.flush()
-        
-        # Create checkpoint with metrics
-        checkpoint = {
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': lr_scheduler.state_dict(),
-            'metrics': {
-                'loss': loss,
-                'dice': dice,
-                'iou': iou
+        # ========== SAVE CHECKPOINTS (rank 0 only) ==========
+        if is_main_process():
+            # Get current learning rate
+            current_lr = optimizer.param_groups[0]['lr']
+            
+            # Log to CSV
+            log_writer.writerow([
+                epoch,
+                f'{loss:.4f}',
+                f'{dice:.4f}',
+                f'{iou:.4f}',
+                f'{current_lr:.6f}',
+                f'{best_iou:.4f}',
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            ])
+            log_file.flush()
+            
+            # Create checkpoint with metrics
+            checkpoint = {
+                'epoch': epoch + 1,
+                'state_dict': model_without_ddp.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': lr_scheduler.state_dict(),
+                'best_iou': best_iou,
+                'metrics': {
+                    'loss': loss,
+                    'dice': dice,
+                    'iou': iou
+                }
             }
-        }
+            
+            # Save last checkpoint
+            last_path = save_path + 'last.pth'
+            torch.save(checkpoint, last_path)
+            print(f'[Saved Last Checkpoint] {last_path}')
+            
+            # Save best checkpoint if IoU improved
+            if iou > best_iou:
+                best_iou = iou
+                checkpoint['best_iou'] = best_iou
+                best_path = save_path + 'best.pth'
+                torch.save(checkpoint, best_path)
+                print(f'✨ [Saved Best Model] IoU: {iou:.4f} -> {best_path}')
         
-        # Save last checkpoint
-        last_path = save_path + 'last.pth'
-        torch.save(checkpoint, last_path)
-        print(f'[Saved Last Checkpoint] {last_path}')
-        
-        # Save best checkpoint if IoU improved
-        if iou > best_iou:
-            best_iou = iou
-            best_path = save_path + 'best.pth'
-            torch.save(checkpoint, best_path)
-            print(f'✨ [Saved Best Model] IoU: {iou:.4f} -> {best_path}')
+        # Synchronize before next epoch
+        if world_size > 1:
+            dist.barrier()
     
-    # Close log file
-    log_file.close()
-    print(f'[Training Complete] Log saved to: {log_path}')
+    # Close log file (rank 0 only)
+    if is_main_process():
+        log_file.close()
+        print(f'[Training Complete] Log saved to: {log_path}')
+    
+    # Cleanup distributed
+    cleanup_distributed()
+
